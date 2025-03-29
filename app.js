@@ -195,7 +195,7 @@ function initializeGame(nickname) {
 function startNewRound() {
   gameState.roundInProgress = true;
   gameState.guesses.clear();
-  gameState.evaluatedGuesses.clear();
+  gameState.evaluatedGuesses = new Map();
   gameState.timeLeft = gameState.roundTime;
 
   // Clear canvas
@@ -214,7 +214,7 @@ function startNewRound() {
 
   // Send game state to all players
   broadcastGameState();
-} 
+}
 
 function startTimer() {
   const timerElement = document.querySelector("#timer");
@@ -242,12 +242,13 @@ function startTimer() {
 
 
 // Funcion para evaluar las respuestas
-function handleGuessEvaluation(playerId, isCorrect) {
+function handleGuessEvaluation(playerId, isCorrect, guess) {
   const evaluationData = {
     type: "guessEvaluation",
     playerId: playerId,
     isCorrect: isCorrect,
-    word: gameState.currentWord
+    word: gameState.currentWord,
+    guess: guess
   };
 
   // Broadcast la evaluación a todos los peers
@@ -256,9 +257,12 @@ function handleGuessEvaluation(playerId, isCorrect) {
     peer.write(JSON.stringify(evaluationData));
   }
 
-  // Actualizar estado local
-  gameState.evaluatedGuesses.set(playerId, isCorrect);
-} 
+  // Actualizar estado local con la respuesta evaluada
+  gameState.evaluatedGuesses.set(playerId, {
+    isCorrect: isCorrect,
+    guess: guess
+  });
+}
 
 
 
@@ -356,10 +360,13 @@ function updateChatMessages() {
     const isDrawer = gameState.currentDrawer === myId;
     const isMyGuess = playerId === myId;
     const nickname = gameState.nicknames.get(playerId) || playerId;
-    const isEvaluated = gameState.evaluatedGuesses.has(playerId);
+    
+    // Modificar esta parte para permitir múltiples intentos
+    const lastEvaluation = gameState.evaluatedGuesses.get(playerId);
+    const isLastGuessEvaluated = lastEvaluation && lastEvaluation.guess === guess;
 
-    if (isDrawer && !isEvaluated) {
-      // Mostrar botones de evaluación solo para respuestas no evaluadas
+    if (isDrawer && !isLastGuessEvaluated) {
+      // Mostrar botones de evaluación para nuevos intentos
       messageElement.innerHTML = `
         <span>${nickname}: ${guess}</span>
         <div class="guess-actions">
@@ -371,14 +378,16 @@ function updateChatMessages() {
       const correctBtn = messageElement.querySelector(".correct-btn");
       const incorrectBtn = messageElement.querySelector(".incorrect-btn");
 
-      correctBtn.addEventListener("click", () => markGuess(playerId, true));
-      incorrectBtn.addEventListener("click", () => markGuess(playerId, false));
+      correctBtn.addEventListener("click", () => markGuess(playerId, true, guess));
+      incorrectBtn.addEventListener("click", () => markGuess(playerId, false, guess));
     } else {
-      // Mostrar estado de la evaluación si existe
+      // Mostrar el estado de la evaluación si existe
       const evaluation = gameState.evaluatedGuesses.get(playerId);
-      const evaluationText = evaluation !== undefined 
-        ? (evaluation ? " ✓ ¡Correcto!" : " ✗ Incorrecto")
-        : "";
+      let evaluationText = "";
+      
+      if (evaluation && evaluation.guess === guess) {
+        evaluationText = evaluation.isCorrect ? " ✓ ¡Correcto!" : " ✗ Incorrecto";
+      }
       
       messageElement.innerHTML = `
         <span>${isMyGuess ? "Tu respuesta" : nickname}: ${guess}${evaluationText}</span>
@@ -389,7 +398,7 @@ function updateChatMessages() {
   });
 
   chatMessages.scrollTop = chatMessages.scrollHeight;
-} 
+}
 
 function submitGuess() {
   if (gameState.roundInProgress) {
@@ -443,10 +452,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-function markGuess(playerId, isCorrect) {
+function markGuess(playerId, isCorrect, guess) {
   if (gameState.currentDrawer === b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6)) {
     // Enviar evaluación a todos los jugadores
-    handleGuessEvaluation(playerId, isCorrect);
+    handleGuessEvaluation(playerId, isCorrect, guess);
 
     if (isCorrect) {
       // Actualizar puntuaciones
@@ -471,7 +480,7 @@ function markGuess(playerId, isCorrect) {
       }, 2000);
     }
   }
-} 
+}
 
 function updateScoresDisplay() {
   const scoresElement = document.querySelector("#scores");
@@ -662,21 +671,23 @@ function handleGameData(data) {
         updateChatMessages();
         break;
       case "guessEvaluation":
-        // Actualizar UI para mostrar el resultado de la evaluación
         const guessElement = document.querySelector(`[data-player="${gameData.playerId}"]`);
         if (guessElement) {
           const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
           const isMyGuess = gameData.playerId === myId;
           
           if (isMyGuess) {
-            // Mostrar notificación al jugador que hizo la respuesta
             showGuessNotification(gameData.isCorrect, gameData.word);
           }
-
-          // Actualizar el elemento visual
-          guessElement.classList.add(gameData.isCorrect ? "correct" : "incorrect");
-          const resultText = gameData.isCorrect ? "✓ ¡Correcto!" : "✗ Incorrecto";
-          guessElement.querySelector(".guess-actions").innerHTML = resultText;
+  
+          // Actualizar el estado local de evaluaciones
+          gameState.evaluatedGuesses.set(gameData.playerId, {
+            isCorrect: gameData.isCorrect,
+            guess: gameData.guess
+          });
+  
+          // Actualizar la UI
+          updateChatMessages();
         }
         break;
       case "clear":
@@ -726,7 +737,7 @@ function broadcastGameState() {
   for (const peer of peers) {
     peer.write(JSON.stringify(gameData));
   }
-} 
+}
 
 function showGuessNotification(isCorrect, word) {
   const notification = document.createElement("div");
