@@ -195,6 +195,7 @@ function initializeGame(nickname) {
 function startNewRound() {
   gameState.roundInProgress = true;
   gameState.guesses.clear();
+  gameState.evaluatedGuesses.clear();
   gameState.timeLeft = gameState.roundTime;
 
   // Clear canvas
@@ -213,7 +214,7 @@ function startNewRound() {
 
   // Send game state to all players
   broadcastGameState();
-}
+} 
 
 function startTimer() {
   const timerElement = document.querySelector("#timer");
@@ -240,9 +241,6 @@ function startTimer() {
 }
 
 
-
-
-
 // Funcion para evaluar las respuestas
 function handleGuessEvaluation(playerId, isCorrect) {
   const evaluationData = {
@@ -264,9 +262,9 @@ function handleGuessEvaluation(playerId, isCorrect) {
 
 
 
-
 function endRound() {
   gameState.roundInProgress = false;
+  gameState.evaluatedGuesses.clear();
   const timerElement = document.querySelector("#timer");
 
   // Clear the timer interval
@@ -338,29 +336,12 @@ function endGame() {
     gameState.currentRound = 0;
     gameState.scores.clear();
     gameState.guesses.clear();
+    gameState.evaluatedGuesses.clear();
     updateScoresDisplay();
     startNewRound();
   });
 }
 
-function showGuessesToDrawer() {
-  const guessesList = document.querySelector("#guesses-list");
-  guessesList.innerHTML = "";
-
-  gameState.guesses.forEach((guess, playerId) => {
-    const nickname = gameState.nicknames.get(playerId) || playerId;
-    const guessElement = document.createElement("div");
-    guessElement.className = "guess-item";
-    guessElement.innerHTML = `
-      <span>${nickname}: ${guess}</span>
-      <div>
-        <button onclick="markGuess('${playerId}', true)">Correct</button>
-        <button onclick="markGuess('${playerId}', false)">Incorrect</button>
-      </div>
-    `;
-    guessesList.appendChild(guessElement);
-  });
-}
 
 function updateChatMessages() {
   const chatMessages = document.querySelector("#chat-messages");
@@ -443,31 +424,6 @@ function submitGuess() {
   }
 }
 
-function clearTimer() {
-  const timerElement = document.querySelector("#timer");
-  timerElement.textContent = "";
-}
-
-function checkAllPlayersGuessed() {
-  // Get all players except the current drawer
-  const guessers = gameState.players.filter(
-    (p) => p !== gameState.currentDrawer
-  );
-
-  // Check if all guessers have submitted a guess
-  const allGuessed = guessers.every((playerId) =>
-    gameState.guesses.has(playerId)
-  );
-
-  if (allGuessed) {
-    // Notify the drawer
-    const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
-    if (gameState.currentDrawer === myId) {
-      const wordDisplay = document.querySelector("#word-display");
-      wordDisplay.textContent = `All players have guessed! Evaluate their guesses.`;
-    }
-  }
-}
 
 // Add event listeners for guess submission
 document.addEventListener("DOMContentLoaded", () => {
@@ -484,6 +440,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 });
+
+
 
 function markGuess(playerId, isCorrect) {
   if (gameState.currentDrawer === b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6)) {
@@ -679,6 +637,7 @@ function handleGameData(data) {
           scores: new Map(Object.entries(newState.scores)),
           guesses: new Map(Object.entries(newState.guesses)),
           nicknames: new Map(Object.entries(newState.nicknames)),
+          evaluatedGuesses: new Map(Object.entries(newState.evaluatedGuesses)),
           currentRound: newState.currentRound,
           maxRounds: newState.maxRounds,
           players: newState.players,
@@ -689,7 +648,7 @@ function handleGameData(data) {
         // Update timer display and start/stop timer based on game state
         const timerElement = document.querySelector("#timer");
         if (gameState.roundInProgress) {
-          startTimer(); // Start or restart timer for all players
+          startTimer();
         } else {
           if (window.timerInterval) {
             clearInterval(window.timerInterval);
@@ -750,6 +709,7 @@ function broadcastGameState() {
   const scoresObject = Object.fromEntries(gameState.scores);
   const guessesObject = Object.fromEntries(gameState.guesses);
   const nicknamesObject = Object.fromEntries(gameState.nicknames);
+  const evaluatedGuessesObject = Object.fromEntries(gameState.evaluatedGuesses);
 
   const gameData = {
     type: "gameState",
@@ -758,6 +718,7 @@ function broadcastGameState() {
       scores: scoresObject,
       guesses: guessesObject,
       nicknames: nicknamesObject,
+      evaluatedGuesses: evaluatedGuessesObject,
     },
   };
 
@@ -765,7 +726,7 @@ function broadcastGameState() {
   for (const peer of peers) {
     peer.write(JSON.stringify(gameData));
   }
-}
+} 
 
 function showGuessNotification(isCorrect, word) {
   const notification = document.createElement("div");
