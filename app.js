@@ -14,6 +14,7 @@ let currentTool = "pen";
 let currentColor = "#000000";
 let lastX = 0;
 let lastY = 0;
+let roundTimer = null; 
 
 // Game state
 let gameState = {
@@ -29,6 +30,7 @@ let gameState = {
   currentRound: 0,
   maxRounds: 5,
   players: [], // Array to store player order
+  evaluatedGuesses: new Map(),
 };
 
 // Word list for the game
@@ -237,6 +239,32 @@ function startTimer() {
   }, 1000);
 }
 
+
+
+
+
+// Funcion para evaluar las respuestas
+function handleGuessEvaluation(playerId, isCorrect) {
+  const evaluationData = {
+    type: "guessEvaluation",
+    playerId: playerId,
+    isCorrect: isCorrect,
+    word: gameState.currentWord
+  };
+
+  // Broadcast la evaluación a todos los peers
+  const peers = [...swarm.connections];
+  for (const peer of peers) {
+    peer.write(JSON.stringify(evaluationData));
+  }
+
+  // Actualizar estado local
+  gameState.evaluatedGuesses.set(playerId, isCorrect);
+} 
+
+
+
+
 function endRound() {
   gameState.roundInProgress = false;
   const timerElement = document.querySelector("#timer");
@@ -347,9 +375,10 @@ function updateChatMessages() {
     const isDrawer = gameState.currentDrawer === myId;
     const isMyGuess = playerId === myId;
     const nickname = gameState.nicknames.get(playerId) || playerId;
+    const isEvaluated = gameState.evaluatedGuesses.has(playerId);
 
-    if (isDrawer) {
-      // Drawer sees all guesses with checkmark and cross buttons
+    if (isDrawer && !isEvaluated) {
+      // Mostrar botones de evaluación solo para respuestas no evaluadas
       messageElement.innerHTML = `
         <span>${nickname}: ${guess}</span>
         <div class="guess-actions">
@@ -358,22 +387,28 @@ function updateChatMessages() {
         </div>
       `;
 
-      // Add event listeners to the buttons
       const correctBtn = messageElement.querySelector(".correct-btn");
       const incorrectBtn = messageElement.querySelector(".incorrect-btn");
 
       correctBtn.addEventListener("click", () => markGuess(playerId, true));
       incorrectBtn.addEventListener("click", () => markGuess(playerId, false));
-    } else if (isMyGuess) {
-      // Players see their own guesses
-      messageElement.innerHTML = `<span>Your guess: ${guess}</span>`;
+    } else {
+      // Mostrar estado de la evaluación si existe
+      const evaluation = gameState.evaluatedGuesses.get(playerId);
+      const evaluationText = evaluation !== undefined 
+        ? (evaluation ? " ✓ ¡Correcto!" : " ✗ Incorrecto")
+        : "";
+      
+      messageElement.innerHTML = `
+        <span>${isMyGuess ? "Tu respuesta" : nickname}: ${guess}${evaluationText}</span>
+      `;
     }
+
     chatMessages.appendChild(messageElement);
   });
 
-  // Scroll to bottom
   chatMessages.scrollTop = chatMessages.scrollHeight;
-}
+} 
 
 function submitGuess() {
   if (gameState.roundInProgress) {
@@ -451,51 +486,34 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function markGuess(playerId, isCorrect) {
-  if (
-    gameState.currentDrawer ===
-    b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6)
-  ) {
+  if (gameState.currentDrawer === b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6)) {
+    // Enviar evaluación a todos los jugadores
+    handleGuessEvaluation(playerId, isCorrect);
+
     if (isCorrect) {
-      // Add points
+      // Actualizar puntuaciones
       const guesserScore = gameState.scores.get(playerId) || 0;
       const drawerScore = gameState.scores.get(gameState.currentDrawer) || 0;
       gameState.scores.set(playerId, guesserScore + 3);
       gameState.scores.set(gameState.currentDrawer, drawerScore + 1);
-
-      // Mark guess as correct
-      const messageElement = document.querySelector(
-        `[data-player="${playerId}"]`
-      );
-      if (messageElement) {
-        messageElement.classList.add("correct");
-        // Remove the action buttons
-        const actions = messageElement.querySelector(".guess-actions");
-        if (actions) {
-          actions.innerHTML = "✓ Correct!";
-        }
-      }
-    } else {
-      // Mark guess as incorrect
-      const messageElement = document.querySelector(
-        `[data-player="${playerId}"]`
-      );
-      if (messageElement) {
-        messageElement.classList.add("incorrect");
-        // Remove the action buttons
-        const actions = messageElement.querySelector(".guess-actions");
-        if (actions) {
-          actions.innerHTML = "✗ Incorrect";
-        }
-      }
     }
+
+    // Actualizar UI
+    updateChatMessages();
     updateScoresDisplay();
 
-    // End the round after evaluating the guess
-    setTimeout(() => {
-      endRound();
-    }, 2000);
+    // Si la respuesta es correcta, terminar la ronda
+    if (isCorrect) {
+      if (roundTimer) {
+        clearInterval(roundTimer);
+        roundTimer = null;
+      }
+      setTimeout(() => {
+        endRound();
+      }, 2000);
+    }
   }
-}
+} 
 
 function updateScoresDisplay() {
   const scoresElement = document.querySelector("#scores");
@@ -684,6 +702,24 @@ function handleGameData(data) {
         gameState.guesses.set(gameData.playerId, gameData.guess);
         updateChatMessages();
         break;
+      case "guessEvaluation":
+        // Actualizar UI para mostrar el resultado de la evaluación
+        const guessElement = document.querySelector(`[data-player="${gameData.playerId}"]`);
+        if (guessElement) {
+          const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+          const isMyGuess = gameData.playerId === myId;
+          
+          if (isMyGuess) {
+            // Mostrar notificación al jugador que hizo la respuesta
+            showGuessNotification(gameData.isCorrect, gameData.word);
+          }
+
+          // Actualizar el elemento visual
+          guessElement.classList.add(gameData.isCorrect ? "correct" : "incorrect");
+          const resultText = gameData.isCorrect ? "✓ ¡Correcto!" : "✗ Incorrecto";
+          guessElement.querySelector(".guess-actions").innerHTML = resultText;
+        }
+        break;
       case "clear":
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         break;
@@ -730,3 +766,18 @@ function broadcastGameState() {
     peer.write(JSON.stringify(gameData));
   }
 }
+
+function showGuessNotification(isCorrect, word) {
+  const notification = document.createElement("div");
+  notification.className = `guess-notification ${isCorrect ? "correct" : "incorrect"}`;
+  notification.textContent = isCorrect 
+    ? `¡Correcto! La palabra era "${word}"` 
+    : "Respuesta incorrecta, ¡sigue intentando!";
+
+  document.body.appendChild(notification);
+  
+  // Remover la notificación después de 3 segundos
+  setTimeout(() => {
+    notification.remove();
+  }, 3000);
+} 
