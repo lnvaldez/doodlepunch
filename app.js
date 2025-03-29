@@ -215,9 +215,16 @@ function startNewRound() {
 
 function startTimer() {
   const timerElement = document.querySelector("#timer");
-  const timer = setInterval(() => {
+  // Clear any existing interval
+  if (window.timerInterval) {
+    clearInterval(window.timerInterval);
+  }
+
+  // Start new interval
+  window.timerInterval = setInterval(() => {
     if (!gameState.roundInProgress) {
-      clearInterval(timer);
+      clearInterval(window.timerInterval);
+      timerElement.textContent = "";
       return;
     }
 
@@ -232,7 +239,13 @@ function startTimer() {
 
 function endRound() {
   gameState.roundInProgress = false;
-  document.querySelector("#timer").textContent = "Round ended!";
+  const timerElement = document.querySelector("#timer");
+
+  // Clear the timer interval
+  if (window.timerInterval) {
+    clearInterval(window.timerInterval);
+  }
+  timerElement.textContent = "Round ended!";
 
   // Clear all canvases
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -395,6 +408,11 @@ function submitGuess() {
   }
 }
 
+function clearTimer() {
+  const timerElement = document.querySelector("#timer");
+  timerElement.textContent = "";
+}
+
 function checkAllPlayersGuessed() {
   // Get all players except the current drawer
   const guessers = gameState.players.filter(
@@ -407,11 +425,11 @@ function checkAllPlayersGuessed() {
   );
 
   if (allGuessed) {
-    // Instead of ending the round, just notify the drawer
+    // Notify the drawer
     const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
     if (gameState.currentDrawer === myId) {
       const wordDisplay = document.querySelector("#word-display");
-      wordDisplay.textContent = `All players have guessed! Evaluate their guesses before time runs out.`;
+      wordDisplay.textContent = `All players have guessed! Evaluate their guesses.`;
     }
   }
 }
@@ -649,6 +667,17 @@ function handleGameData(data) {
         };
         updateGameState();
         updateChatMessages();
+
+        // Update timer display and start/stop timer based on game state
+        const timerElement = document.querySelector("#timer");
+        if (gameState.roundInProgress) {
+          startTimer(); // Start or restart timer for all players
+        } else {
+          if (window.timerInterval) {
+            clearInterval(window.timerInterval);
+          }
+          timerElement.textContent = "";
+        }
         break;
       case "guess":
         // Update guesses from received data
