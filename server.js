@@ -43,20 +43,11 @@ testOpenAIConnection();
 app.post("/evaluate-guess", async (req, res) => {
   try {
     const { actualWord, guess } = req.body;
-    console.log(`Evaluating: "${actualWord}" vs "${guess}"`);
-
-    // If exact match, return 3 points immediately
-    if (guess.toLowerCase() === actualWord.toLowerCase()) {
-      console.log("Exact match! 3 points");
-      return res.json({ points: 3, similarity: 1.0 });
-    }
 
     // Get embeddings for both words
-    console.log("Requesting embeddings from OpenAI...");
     const embeddingResponse = await openai.embeddings.create({
-      model: "text-embedding-3-small",
+      model: "text-embedding-ada-002",
       input: [actualWord, guess],
-      encoding_format: "float",
     });
 
     // Extract the embeddings
@@ -65,24 +56,10 @@ app.post("/evaluate-guess", async (req, res) => {
 
     // Calculate cosine similarity
     const similarity = cosineSimilarity(actualEmbedding, guessEmbedding);
-    console.log(`Similarity: ${similarity.toFixed(4)}`);
 
-    // Assign points based on similarity
-    let points = 0;
-    if (similarity >= 0.85) {
-      points = 2;
-    } else if (similarity >= 0.65) {
-      points = 1;
-    }
-    console.log(`Points awarded: ${points}`);
-
-    res.json({ points, similarity });
+    // Return the similarity score
+    res.json({ similarity });
   } catch (error) {
-    console.error("AI Evaluation Error:", error.message);
-    if (error.response) {
-      console.error("Response status:", error.response.status);
-      console.error("Response data:", error.response.data);
-    }
     res.status(500).json({ error: `AI evaluation failed: ${error.message}` });
   }
 });

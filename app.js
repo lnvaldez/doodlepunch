@@ -395,27 +395,83 @@ function localEvaluateSimilarity(word1, word2) {
     return { points: 3, similarity: 1.0 };
   }
 
-  // Check for substring or partial match
-  if (word1.includes(word2) || word2.includes(word1)) {
-    const similarity = 0.8;
-    return { points: 2, similarity };
+  // Categories for common words in the game
+  const categories = {
+    animals: ["cat", "dog", "bird", "fish"],
+    home: ["house", "window", "door", "chair", "table"],
+    nature: [
+      "tree",
+      "flower",
+      "mountain",
+      "river",
+      "beach",
+      "ocean",
+      "forest",
+      "desert",
+      "sun",
+      "moon",
+      "star",
+      "cloud",
+      "rain",
+      "snow",
+    ],
+    transport: ["car", "bicycle", "train", "plane", "bridge"],
+    tech: ["computer", "phone"],
+    objects: ["book"],
+  };
+
+  // Find categories for each word
+  const word1Categories = [];
+  const word2Categories = [];
+
+  for (const [category, words] of Object.entries(categories)) {
+    if (words.includes(word1)) word1Categories.push(category);
+    if (words.includes(word2)) word2Categories.push(category);
   }
 
-  // Check for character similarity (simple Jaccard coefficient)
-  const set1 = new Set(word1.split(""));
-  const set2 = new Set(word2.split(""));
+  // Find shared categories
+  const sharedCategories = word1Categories.filter((cat) =>
+    word2Categories.includes(cat)
+  );
 
-  const intersectionSize = [...set1].filter((x) => set2.has(x)).length;
-  const unionSize = set1.size + set2.size - intersectionSize;
+  let similarity = 0;
 
-  const similarity = intersectionSize / unionSize;
+  // If they share categories, they are semantically similar
+  if (sharedCategories.length > 0) {
+    similarity = 0.7; // Same category (e.g., cat and dog are both animals)
+  } else if (word1Categories.length > 0 && word2Categories.length > 0) {
+    // Different categories but both are known words
+    similarity = 0.3;
+  } else {
+    // Check for substring or partial match
+    if (word1.includes(word2) || word2.includes(word1)) {
+      similarity = 0.6;
+    } else {
+      // Check for character similarity (simple Jaccard coefficient)
+      const set1 = new Set(word1.split(""));
+      const set2 = new Set(word2.split(""));
+
+      const intersectionSize = [...set1].filter((x) => set2.has(x)).length;
+      const unionSize = set1.size + set2.size - intersectionSize;
+
+      // Calculate Jaccard similarity
+      similarity = intersectionSize / unionSize;
+    }
+  }
 
   // Determine points based on similarity
   let points = 0;
-  if (similarity >= 0.5) {
+  if (similarity >= 0.85) {
+    points = 2;
+  } else if (similarity >= 0.65) {
     points = 1;
   }
 
+  console.log(
+    `Local similarity for "${word1}" vs "${word2}": ${similarity.toFixed(
+      2
+    )} (${points} points)`
+  );
   return { points, similarity };
 }
 
