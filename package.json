@@ -14,7 +14,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "dev": "pear run -d .",
-    "test": "brittle test/*.test.js"
+    "test": "brittle test/*.test.js",
+    "server": "node server.js"
   },
   "devDependencies": {
     "brittle": "^3.0.0",
@@ -23,6 +24,10 @@
   "dependencies": {
     "b4a": "^1.6.7",
     "hypercore-crypto": "^3.5.0",
-    "hyperswarm": "^4.11.1"
+    "hyperswarm": "^4.11.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.1",
+    "express": "^4.19.2",
+    "openai": "^4.24.1"
   }
 }

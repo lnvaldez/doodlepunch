@@ -346,43 +346,38 @@ function updateChatMessages() {
   const chatMessages = document.querySelector("#chat-messages");
   chatMessages.innerHTML = "";
 
-  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
-
-  gameState.guesses.forEach((guess, playerId) => {
+  gameState.guesses.forEach((guessData, playerId) => {
     const messageElement = document.createElement("div");
     messageElement.className = "chat-message";
     messageElement.setAttribute("data-player", playerId);
 
-    const isDrawer = gameState.currentDrawer === myId;
-    const isMyGuess = playerId === myId;
-    let nickname;
+    const nickname =
+      gameState.nicknames.get(playerId) || `Player ${playerId.substr(0, 4)}`;
 
-    if (playerId === myId) {
-      nickname = "You";
+    // Handle both old and new guess format
+    if (typeof guessData === "string") {
+      // Old format - simple string
+      messageElement.innerHTML = `<span>${nickname}: ${guessData}</span>`;
     } else {
-      nickname =
-        gameState.nicknames.get(playerId) || `Player ${playerId.substr(0, 4)}`;
-    }
-    if (isDrawer) {
-      // Drawer sees all guesses with checkmark and cross buttons
+      // New format - object with text, points, similarity
+      const points = guessData.points || 0;
+      const similarity = guessData.similarity
+        ? Math.round(guessData.similarity * 100)
+        : 0;
+
+      let pointsClass = "";
+      if (points === 3) pointsClass = "correct";
+      else if (points > 0) pointsClass = "partial";
+
       messageElement.innerHTML = `
-        <span>${nickname}: ${guess}</span>
-        <div class="guess-actions">
-          <button class="action-button correct-btn">✓</button>
-          <button class="action-button incorrect-btn">✗</button>
+        <div class="guess-result">
+          <span class="guess-text">${nickname}: ${guessData.text}</span>
+          <span class="guess-points ${pointsClass}">${points} points</span>
+          <span class="guess-similarity">${similarity}% match</span>
         </div>
       `;
-
-      // Add event listeners to the buttons
-      const correctBtn = messageElement.querySelector(".correct-btn");
-      const incorrectBtn = messageElement.querySelector(".incorrect-btn");
-
-      correctBtn.addEventListener("click", () => markGuess(playerId, true));
-      incorrectBtn.addEventListener("click", () => markGuess(playerId, false));
-    } else if (isMyGuess) {
-      // Players see their own guesses
-      messageElement.innerHTML = `<span>Your guess: ${guess}</span>`;
     }
+
     chatMessages.appendChild(messageElement);
   });
 
@@ -390,7 +385,41 @@ function updateChatMessages() {
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-function submitGuess() {
+// Local fallback for similarity evaluation
+function localEvaluateSimilarity(word1, word2) {
+  word1 = word1.toLowerCase();
+  word2 = word2.toLowerCase();
+
+  // Exact match
+  if (word1 === word2) {
+    return { points: 3, similarity: 1.0 };
+  }
+
+  // Check for substring or partial match
+  if (word1.includes(word2) || word2.includes(word1)) {
+    const similarity = 0.8;
+    return { points: 2, similarity };
+  }
+
+  // Check for character similarity (simple Jaccard coefficient)
+  const set1 = new Set(word1.split(""));
+  const set2 = new Set(word2.split(""));
+
+  const intersectionSize = [...set1].filter((x) => set2.has(x)).length;
+  const unionSize = set1.size + set2.size - intersectionSize;
+
+  const similarity = intersectionSize / unionSize;
+
+  // Determine points based on similarity
+  let points = 0;
+  if (similarity >= 0.5) {
+    points = 1;
+  }
+
+  return { points, similarity };
+}
+
+async function submitGuess() {
   if (gameState.roundInProgress) {
     const guessInput = document.querySelector("#guess-input");
     const guess = guessInput.value.trim().toLowerCase();
@@ -398,27 +427,145 @@ function submitGuess() {
     if (guess) {
       const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
 
-      // Send guess to all players
-      const guessData = {
-        type: "guess",
-        playerId: myId,
-        guess: guess,
-      };
+      try {
+        // Show notification that we're processing
+        showNotification("Evaluating your guess...", 2000);
 
-      const peers = [...swarm.connections];
-      for (const peer of peers) {
-        peer.write(JSON.stringify(guessData));
+        console.log(
+          `Sending guess "${guess}" to be evaluated against "${gameState.currentWord}"`
+        );
+
+        let points, similarity;
+
+        try {
+          // Get AI evaluation
+          const response = await fetch("http://localhost:3000/evaluate-guess", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              actualWord: gameState.currentWord,
+              guess: guess,
+            }),
+          });
+
+          // Log response status
+          console.log(`Server response status: ${response.status}`);
+
+          // Handle non-OK responses
+          if (!response.ok) {
+            const errorBody = await response.text();
+            console.error(`Server error: ${response.status}`, errorBody);
+            throw new Error(`Server error (${response.status}): ${errorBody}`);
+          }
+
+          // Parse response
+          const responseData = await response.json();
+          console.log("Evaluation response:", responseData);
+
+          if (responseData.error) {
+            throw new Error(responseData.error);
+          }
+
+          ({ points, similarity } = responseData);
+        } catch (error) {
+          console.warn(
+            "Server evaluation failed, using local fallback:",
+            error.message
+          );
+          showNotification("Using local evaluation (server unavailable)", 2000);
+
+          // Use local evaluation as fallback
+          const result = localEvaluateSimilarity(gameState.currentWord, guess);
+          points = result.points;
+          similarity = result.similarity;
+        }
+
+        // Update scores
+        const currentScore = gameState.scores.get(myId) || 0;
+        gameState.scores.set(myId, currentScore + points);
+
+        // Store guess with evaluation data
+        gameState.guesses.set(myId, {
+          text: guess,
+          points: points,
+          similarity: similarity,
+        });
+
+        // Show notification with points awarded
+        showNotification(
+          `${points} points awarded! (${Math.round(
+            similarity * 100
+          )}% similar)`,
+          3000
+        );
+
+        // Broadcast updated guess and score to all players
+        const guessData = {
+          type: "aiGuess",
+          playerId: myId,
+          guess: {
+            text: guess,
+            points: points,
+            similarity: similarity,
+          },
+          currentScore: gameState.scores.get(myId),
+        };
+
+        const peers = [...swarm.connections];
+        for (const peer of peers) {
+          peer.write(JSON.stringify(guessData));
+        }
+
+        updateChatMessages();
+        updateScoresDisplay();
+        checkAllPlayersGuessed();
+        guessInput.value = "";
+      } catch (error) {
+        console.error("Error in guess submission:", error);
+
+        // Use local evaluation as final fallback
+        const result = localEvaluateSimilarity(gameState.currentWord, guess);
+        const points = result.points;
+        const similarity = result.similarity;
+
+        // Update score with local evaluation
+        const currentScore = gameState.scores.get(myId) || 0;
+        gameState.scores.set(myId, currentScore + points);
+
+        // Store guess with local evaluation
+        gameState.guesses.set(myId, {
+          text: guess,
+          points: points,
+          similarity: similarity,
+        });
+
+        showNotification(
+          `Using local evaluation: ${points} points awarded`,
+          3000
+        );
+
+        // Broadcast the locally evaluated guess
+        const guessData = {
+          type: "aiGuess",
+          playerId: myId,
+          guess: {
+            text: guess,
+            points: points,
+            similarity: similarity,
+          },
+          currentScore: gameState.scores.get(myId),
+        };
+
+        const peers = [...swarm.connections];
+        for (const peer of peers) {
+          peer.write(JSON.stringify(guessData));
+        }
+
+        updateChatMessages();
+        updateScoresDisplay();
+        checkAllPlayersGuessed();
+        guessInput.value = "";
       }
-
-      // Update local state
-      gameState.guesses.set(myId, guess);
-      updateChatMessages();
-
-      // Check if all players have guessed
-      checkAllPlayersGuessed();
-
-      // Clear input
-      guessInput.value = "";
     }
   }
 }
@@ -693,6 +840,14 @@ function handleGameData(data) {
         currentColor = originalColor;
         currentTool = originalTool;
         break;
+      case "aiGuess":
+        // Update guesses with AI evaluation data
+        gameState.guesses.set(gameData.playerId, gameData.guess);
+        // Update score
+        gameState.scores.set(gameData.playerId, gameData.currentScore);
+        updateChatMessages();
+        updateScoresDisplay();
+        break;
       case "evaluation":
         // Update the UI to show the evaluation to the guesser
         const messageElement = document.querySelector(
@@ -765,7 +920,7 @@ function handleGameData(data) {
         }
         break;
       case "guess":
-        // Update guesses from received data
+        // Update guesses from received data (old format)
         gameState.guesses.set(gameData.playerId, gameData.guess);
         updateChatMessages();
         break;
@@ -814,4 +969,47 @@ function broadcastGameState() {
   for (const peer of peers) {
     peer.write(JSON.stringify(gameData));
   }
+}
+
+function showNotification(message, duration = 3000) {
+  // Check if notification container exists, if not create it
+  let notificationContainer = document.getElementById("notification-container");
+  if (!notificationContainer) {
+    notificationContainer = document.createElement("div");
+    notificationContainer.id = "notification-container";
+    notificationContainer.style.position = "fixed";
+    notificationContainer.style.top = "20px";
+    notificationContainer.style.right = "20px";
+    notificationContainer.style.zIndex = "1000";
+    document.body.appendChild(notificationContainer);
+  }
+
+  // Create notification element
+  const notification = document.createElement("div");
+  notification.className = "notification";
+  notification.style.backgroundColor = "#000";
+  notification.style.color = "#b0d944";
+  notification.style.padding = "10px 15px";
+  notification.style.margin = "5px 0";
+  notification.style.border = "1px solid #b0d944";
+  notification.style.borderRadius = "3px";
+  notification.style.opacity = "0";
+  notification.style.transition = "opacity 0.3s";
+  notification.textContent = message;
+
+  // Add to container
+  notificationContainer.appendChild(notification);
+
+  // Fade in
+  setTimeout(() => {
+    notification.style.opacity = "1";
+  }, 10);
+
+  // Remove after duration
+  setTimeout(() => {
+    notification.style.opacity = "0";
+    setTimeout(() => {
+      notificationContainer.removeChild(notification);
+    }, 300);
+  }, duration);
 }
