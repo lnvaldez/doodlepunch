@@ -65,7 +65,7 @@
         align-self: center;
       }
 
-      #drawing-board {
+      #game-board {
         display: flex;
         flex-direction: column;
         width: 100vw;
@@ -112,6 +112,76 @@
         background: #b0d944;
         color: #000;
       }
+
+      #game-info {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+      }
+
+      #word-display {
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #b0d944;
+      }
+
+      #timer {
+        font-size: 1.2rem;
+        color: #b0d944;
+      }
+
+      #guessing-area {
+        display: flex;
+        gap: 1rem;
+        margin-top: 1rem;
+      }
+
+      #guess-input {
+        flex: 1;
+      }
+
+      #guesses-list {
+        margin-top: 1rem;
+        max-height: 150px;
+        overflow-y: auto;
+        border: 1px solid #b0d944;
+        padding: 0.5rem;
+      }
+
+      .guess-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem;
+        border-bottom: 1px solid #b0d944;
+      }
+
+      .guess-item:last-child {
+        border-bottom: none;
+      }
+
+      .correct {
+        color: #00ff00;
+      }
+
+      .incorrect {
+        color: #ff0000;
+      }
+
+      #scores {
+        display: flex;
+        gap: 2rem;
+        margin-top: 1rem;
+        padding: 0.5rem;
+        background: #000;
+        border: 1px solid #b0d944;
+      }
+
+      .player-score {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
     </style>
     <script type="module" src="./app.js"></script>
   </head>
@@ -122,7 +192,7 @@
     <main>
       <div id="setup">
         <div>
-          <button id="create-chat-room">Create Drawing Board</button>
+          <button id="create-chat-room">Create Game Room</button>
         </div>
         <div id="or">- or -</div>
         <form id="join-form">
@@ -131,17 +201,21 @@
             required
             id="join-chat-room-topic"
             type="text"
-            placeholder="Drawing Board Topic"
+            placeholder="Game Room Topic"
           />
         </form>
       </div>
       <div id="loading" class="hidden">Loading ...</div>
-      <div id="drawing-board" class="hidden">
+      <div id="game-board" class="hidden">
         <div id="header">
           <div id="details">
-            <div>Topic: <span id="chat-room-topic"></span></div>
-            <div>Peers: <span id="peers-count">0</span></div>
+            <div>Room: <span id="chat-room-topic"></span></div>
+            <div>Players: <span id="peers-count">0</span></div>
           </div>
+        </div>
+        <div id="game-info">
+          <div id="word-display"></div>
+          <div id="timer"></div>
         </div>
         <div id="canvas-container">
           <canvas id="canvas"></canvas>
@@ -152,6 +226,16 @@
           <button class="tool-button" data-tool="clear">Clear</button>
           <input type="color" id="color-picker" value="#000000" />
         </div>
+        <div id="guessing-area">
+          <input
+            type="text"
+            id="guess-input"
+            placeholder="Enter your guess..."
+          />
+          <button id="submit-guess">Submit Guess</button>
+        </div>
+        <div id="guesses-list"></div>
+        <div id="scores"></div>
       </div>
     </main>
   </body>
