@@ -163,6 +163,9 @@ function initializeGame(nickname) {
   const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
   gameState.scores.set(myId, 0);
   gameState.nicknames.set(myId, nickname);
+
+  // Broadcast initial game state with nickname
+  broadcastGameState();
   updateScoresDisplay();
 
   // Add event listener for start button
@@ -289,13 +292,18 @@ function endGame() {
   const scoresElement = document.querySelector("#scores");
   scoresElement.innerHTML = "<h2>Game Over! Final Scores:</h2>";
 
-  // Sort players by score
-  const sortedPlayers = [...gameState.scores.entries()].sort(
-    (a, b) => b[1] - a[1]
-  );
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+
+  // Sort players by score, but keep current player first
+  const sortedPlayers = [...gameState.scores.entries()].sort((a, b) => {
+    if (a[0] === myId) return -1;
+    if (b[0] === myId) return 1;
+    return b[1] - a[1]; // Sort others by score
+  });
 
   sortedPlayers.forEach(([playerId, score]) => {
-    const nickname = gameState.nicknames.get(playerId) || playerId;
+    const nickname =
+      playerId === myId ? "You" : gameState.nicknames.get(playerId) || playerId;
     const scoreElement = document.createElement("div");
     scoreElement.className = "player-score";
     scoreElement.innerHTML = `<span>${nickname}: ${score}</span>`;
@@ -338,16 +346,23 @@ function updateChatMessages() {
   const chatMessages = document.querySelector("#chat-messages");
   chatMessages.innerHTML = "";
 
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+
   gameState.guesses.forEach((guess, playerId) => {
     const messageElement = document.createElement("div");
     messageElement.className = "chat-message";
     messageElement.setAttribute("data-player", playerId);
 
-    const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
     const isDrawer = gameState.currentDrawer === myId;
     const isMyGuess = playerId === myId;
-    const nickname = gameState.nicknames.get(playerId) || playerId;
+    let nickname;
 
+    if (playerId === myId) {
+      nickname = "You";
+    } else {
+      nickname =
+        gameState.nicknames.get(playerId) || `Player ${playerId.substr(0, 4)}`;
+    }
     if (isDrawer) {
       // Drawer sees all guesses with checkmark and cross buttons
       messageElement.innerHTML = `
@@ -501,8 +516,24 @@ function updateScoresDisplay() {
   const scoresElement = document.querySelector("#scores");
   scoresElement.innerHTML = "";
 
-  gameState.scores.forEach((score, playerId) => {
-    const nickname = gameState.nicknames.get(playerId) || playerId;
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+
+  // Convert scores to array and sort to put current player first
+  const sortedScores = [...gameState.scores.entries()].sort((a, b) => {
+    if (a[0] === myId) return -1;
+    if (b[0] === myId) return 1;
+    return 0;
+  });
+
+  sortedScores.forEach(([playerId, score]) => {
+    let nickname;
+    if (playerId === myId) {
+      nickname = "You";
+    } else {
+      nickname = gameState.nicknames.get(playerId);
+      // If nickname isn't available yet, show placeholder
+      if (!nickname) nickname = `Player ${playerId.substr(0, 4)}`;
+    }
     const scoreElement = document.createElement("div");
     scoreElement.className = "player-score";
     scoreElement.innerHTML = `<span>${nickname}: ${score}</span>`;
@@ -652,6 +683,19 @@ function handleGameData(data) {
       case "gameState":
         // Update game state from received data
         const newState = gameData.state;
+
+        // Preserve existing nicknames and merge with new ones
+        const existingNicknames = new Map(gameState.nicknames);
+        const newNicknames = new Map(Object.entries(newState.nicknames || {}));
+
+        // Merge nicknames, keeping existing ones if they exist
+        for (const [playerId, nickname] of newNicknames) {
+          if (nickname) {
+            // Only update if there's a nickname
+            existingNicknames.set(playerId, nickname);
+          }
+        }
+
         gameState = {
           ...gameState,
           currentDrawer: newState.currentDrawer,
@@ -660,13 +704,14 @@ function handleGameData(data) {
           timeLeft: newState.timeLeft,
           scores: new Map(Object.entries(newState.scores)),
           guesses: new Map(Object.entries(newState.guesses)),
-          nicknames: new Map(Object.entries(newState.nicknames)),
+          nicknames: existingNicknames,
           currentRound: newState.currentRound,
           maxRounds: newState.maxRounds,
           players: newState.players,
         };
         updateGameState();
         updateChatMessages();
+        updateScoresDisplay();
 
         // Update timer display and start/stop timer based on game state
         const timerElement = document.querySelector("#timer");
