@@ -176,6 +176,9 @@ function initializeGame(nickname) {
       players.push(myId);
       gameState.players = players;
       gameState.currentRound = 0;
+      // Set first drawer randomly
+      gameState.currentDrawer =
+        players[Math.floor(Math.random() * players.length)];
       startNewRound();
     } else {
       alert("Please wait for other players to join before starting!");
@@ -234,12 +237,13 @@ function endRound() {
   // Clear all canvases
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Show all guesses to the drawer
-  if (
-    gameState.currentDrawer ===
-    b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6)
-  ) {
-    showGuessesToDrawer();
+  // Broadcast clear action to all peers
+  const clearData = {
+    type: "clear",
+  };
+  const peers = [...swarm.connections];
+  for (const peer of peers) {
+    peer.write(JSON.stringify(clearData));
   }
 
   // Increment round counter
@@ -251,10 +255,10 @@ function endRound() {
     return;
   }
 
-  // Select next drawer
-  const nextDrawer =
-    gameState.players[gameState.currentRound % gameState.players.length];
-  gameState.currentDrawer = nextDrawer;
+  // Select next drawer (alternate between players)
+  const currentDrawerIndex = gameState.players.indexOf(gameState.currentDrawer);
+  const nextDrawerIndex = (currentDrawerIndex + 1) % gameState.players.length;
+  gameState.currentDrawer = gameState.players[nextDrawerIndex];
   gameState.currentWord = words[Math.floor(Math.random() * words.length)];
 
   // Update UI
@@ -468,24 +472,10 @@ function markGuess(playerId, isCorrect) {
     }
     updateScoresDisplay();
 
-    // Check if all guesses have been evaluated
-    const guessers = gameState.players.filter(
-      (p) => p !== gameState.currentDrawer
-    );
-    const allEvaluated = guessers.every((playerId) => {
-      const messageElement = document.querySelector(
-        `[data-player="${playerId}"]`
-      );
-      return (
-        messageElement &&
-        messageElement.querySelector(".guess-actions") === null
-      );
-    });
-
-    if (allEvaluated) {
-      // All guesses have been evaluated, end the round
+    // End the round after evaluating the guess
+    setTimeout(() => {
       endRound();
-    }
+    }, 2000);
   }
 }
 
