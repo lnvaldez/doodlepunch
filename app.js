@@ -505,6 +505,19 @@ function markGuess(playerId, isCorrect) {
     }
     updateScoresDisplay();
 
+    // Send evaluation to all players
+    const evaluationData = {
+      type: "evaluation",
+      playerId: playerId,
+      isCorrect: isCorrect,
+      scores: Object.fromEntries(gameState.scores),
+    };
+
+    const peers = [...swarm.connections];
+    for (const peer of peers) {
+      peer.write(JSON.stringify(evaluationData));
+    }
+
     // End the round after evaluating the guess
     setTimeout(() => {
       endRound();
@@ -679,6 +692,33 @@ function handleGameData(data) {
         // Restore original color and tool
         currentColor = originalColor;
         currentTool = originalTool;
+        break;
+      case "evaluation":
+        // Update the UI to show the evaluation to the guesser
+        const messageElement = document.querySelector(
+          `[data-player="${gameData.playerId}"]`
+        );
+        if (messageElement) {
+          messageElement.classList.add(
+            gameData.isCorrect ? "correct" : "incorrect"
+          );
+          const result = gameData.isCorrect ? "✓ Correct!" : "✗ Incorrect";
+
+          // For players seeing their own guesses
+          if (
+            gameData.playerId ===
+            b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6)
+          ) {
+            messageElement.innerHTML = `<span>Your guess: ${messageElement.textContent.replace(
+              "Your guess: ",
+              ""
+            )} ${result}</span>`;
+          }
+        }
+
+        // Update scores
+        gameState.scores = new Map(Object.entries(gameData.scores));
+        updateScoresDisplay();
         break;
       case "gameState":
         // Update game state from received data
