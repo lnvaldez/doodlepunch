@@ -159,6 +159,26 @@ async function joinSwarm(topicBuffer, nickname) {
 
   // Initialize game state with nickname
   initializeGame(nickname);
+  
+  // Anunciar mi nickname a todos los demás jugadores
+  setTimeout(() => {
+    broadcastNickname(nickname);
+  }, 1000);
+}
+
+
+function broadcastNickname(nickname) {
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+  const nicknameData = {
+    type: "nickname",
+    playerId: myId,
+    nickname: nickname
+  };
+  
+  const peers = [...swarm.connections];
+  for (const peer of peers) {
+    peer.write(JSON.stringify(nicknameData));
+  }
 }
 
 function initializeGame(nickname) {
@@ -692,6 +712,14 @@ function handleGameData(data) {
         break;
       case "clear":
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        break;
+      case "nickname":
+        // Actualizar el mapa de nicknames con el nuevo nickname
+        gameState.nicknames.set(gameData.playerId, gameData.nickname);
+        // Actualizar la visualización de puntuaciones para mostrar los nicknames
+        updateScoresDisplay();
+        // Actualizar mensajes del chat para mostrar los nicknames
+        updateChatMessages();
         break;
     }
   } catch (e) {
