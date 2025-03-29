@@ -25,6 +25,7 @@ let gameState = {
   timeLeft: 60,
   isDrawing: false,
   roundInProgress: false,
+  nicknames: new Map(), // Add nicknames map to game state
 };
 
 // Word list for the game
@@ -106,18 +107,28 @@ document.querySelector("#color-picker").addEventListener("input", (e) => {
 });
 
 async function createGameRoom() {
+  const nickname = document.querySelector("#nickname-input").value.trim();
+  if (!nickname) {
+    alert("Please enter a nickname!");
+    return;
+  }
   const topicBuffer = crypto.randomBytes(32);
-  joinSwarm(topicBuffer);
+  joinSwarm(topicBuffer, nickname);
 }
 
 async function joinGameRoom(e) {
   e.preventDefault();
+  const nickname = document.querySelector("#nickname-input").value.trim();
+  if (!nickname) {
+    alert("Please enter a nickname!");
+    return;
+  }
   const topicStr = document.querySelector("#join-chat-room-topic").value;
   const topicBuffer = b4a.from(topicStr, "hex");
-  joinSwarm(topicBuffer);
+  joinSwarm(topicBuffer, nickname);
 }
 
-async function joinSwarm(topicBuffer) {
+async function joinSwarm(topicBuffer, nickname) {
   document.querySelector("#setup").classList.add("hidden");
   document.querySelector("#loading").classList.remove("hidden");
 
@@ -141,13 +152,14 @@ async function joinSwarm(topicBuffer) {
   // Set up drawing event listeners
   setupDrawingEvents();
 
-  // Initialize game state
-  initializeGame();
+  // Initialize game state with nickname
+  initializeGame(nickname);
 }
 
-function initializeGame() {
+function initializeGame(nickname) {
   const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
   gameState.scores.set(myId, 0);
+  gameState.nicknames.set(myId, nickname);
   updateScoresDisplay();
 
   // Add event listener for start button
@@ -258,11 +270,12 @@ function updateChatMessages() {
     const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
     const isDrawer = gameState.currentDrawer === myId;
     const isMyGuess = playerId === myId;
+    const nickname = gameState.nicknames.get(playerId) || playerId;
 
     if (isDrawer) {
       // Drawer sees all guesses with checkmark and cross buttons
       messageElement.innerHTML = `
-        <span>${playerId}: ${guess}</span>
+        <span>${nickname}: ${guess}</span>
         <div class="guess-actions">
           <button class="action-button correct-btn">✓</button>
           <button class="action-button incorrect-btn">✗</button>
@@ -376,9 +389,10 @@ function updateScoresDisplay() {
   scoresElement.innerHTML = "";
 
   gameState.scores.forEach((score, playerId) => {
+    const nickname = gameState.nicknames.get(playerId) || playerId;
     const scoreElement = document.createElement("div");
     scoreElement.className = "player-score";
-    scoreElement.innerHTML = `<span>${playerId}: ${score}</span>`;
+    scoreElement.innerHTML = `<span>${nickname}: ${score}</span>`;
     scoresElement.appendChild(scoreElement);
   });
 }
@@ -504,6 +518,7 @@ function handleGameData(data) {
           timeLeft: newState.timeLeft,
           scores: new Map(Object.entries(newState.scores)),
           guesses: new Map(Object.entries(newState.guesses)),
+          nicknames: new Map(Object.entries(newState.nicknames)),
         };
         updateGameState();
         updateChatMessages();
@@ -523,6 +538,7 @@ function broadcastGameState() {
   // Convert Map to Object for JSON serialization
   const scoresObject = Object.fromEntries(gameState.scores);
   const guessesObject = Object.fromEntries(gameState.guesses);
+  const nicknamesObject = Object.fromEntries(gameState.nicknames);
 
   const gameData = {
     type: "gameState",
@@ -530,6 +546,7 @@ function broadcastGameState() {
       ...gameState,
       scores: scoresObject,
       guesses: guessesObject,
+      nicknames: nicknamesObject,
     },
   };
 

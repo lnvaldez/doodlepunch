@@ -66,6 +66,19 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
+        gap: 1rem;
+      }
+
+      #nickname-input {
+        width: 300px;
+        text-align: center;
+        font-size: 1.2rem;
+        padding: 0.75rem;
+        margin-bottom: 1rem;
+      }
+
+      #nickname-input:focus {
+        outline: 2px solid #b0d944;
       }
 
       #loading {
@@ -259,6 +272,15 @@
     </div>
     <main>
       <div id="setup">
+        <div>
+          <input
+            required
+            id="nickname-input"
+            type="text"
+            placeholder="Enter your nickname"
+            maxlength="20"
+          />
+        </div>
         <div>
           <button id="create-chat-room">Create Game Room</button>
         </div>
