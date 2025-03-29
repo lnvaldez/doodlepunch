@@ -489,6 +489,23 @@ function drawLine(fromX, fromY, toX, toY) {
   ctx.stroke();
 }
 
+function clearCanvas() {
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+  if (gameState.currentDrawer === myId) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Broadcast clear action to all peers
+    const clearData = {
+      type: "clear",
+    };
+
+    const peers = [...swarm.connections];
+    for (const peer of peers) {
+      peer.write(JSON.stringify(clearData));
+    }
+  }
+}
+
 function handleGameData(data) {
   try {
     const gameData = JSON.parse(data.toString());
@@ -528,11 +545,30 @@ function handleGameData(data) {
         gameState.guesses.set(gameData.playerId, gameData.guess);
         updateChatMessages();
         break;
+      case "clear":
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        break;
     }
   } catch (e) {
     console.error("Error handling game data:", e);
   }
 }
+
+// Tool selection (clear functionality)
+document.querySelectorAll(".tool-button").forEach((button) => {
+  button.addEventListener("click", () => {
+    document
+      .querySelectorAll(".tool-button")
+      .forEach((btn) => btn.classList.remove("active"));
+    button.classList.add("active");
+    currentTool = button.dataset.tool;
+
+    // Add clear functionality
+    if (currentTool === "clear") {
+      clearCanvas();
+    }
+  });
+});
 
 function broadcastGameState() {
   // Convert Map to Object for JSON serialization
