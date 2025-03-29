@@ -25,7 +25,10 @@ let gameState = {
   timeLeft: 60,
   isDrawing: false,
   roundInProgress: false,
-  nicknames: new Map(), // Add nicknames map to game state
+  nicknames: new Map(),
+  currentRound: 0,
+  maxRounds: 5,
+  players: [], // Array to store player order
 };
 
 // Word list for the game
@@ -166,6 +169,13 @@ function initializeGame(nickname) {
   const startButton = document.querySelector("#start-game");
   startButton.addEventListener("click", () => {
     if (swarm.connections.size > 0) {
+      // Initialize player order when starting the game
+      const players = Array.from(swarm.connections).map((peer) =>
+        b4a.toString(peer.remotePublicKey, "hex").substr(0, 6)
+      );
+      players.push(myId);
+      gameState.players = players;
+      gameState.currentRound = 0;
       startNewRound();
     } else {
       alert("Please wait for other players to join before starting!");
@@ -182,17 +192,13 @@ function startNewRound() {
   gameState.guesses.clear();
   gameState.timeLeft = gameState.roundTime;
 
-  // Select random drawer
-  const players = Array.from(swarm.connections).map((peer) =>
-    b4a.toString(peer.remotePublicKey, "hex").substr(0, 6)
-  );
-  players.push(b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6));
-
-  gameState.currentDrawer = players[Math.floor(Math.random() * players.length)];
-  gameState.currentWord = words[Math.floor(Math.random() * words.length)];
-
   // Clear canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Select drawer based on round number
+  gameState.currentDrawer =
+    gameState.players[gameState.currentRound % gameState.players.length];
+  gameState.currentWord = words[Math.floor(Math.random() * words.length)];
 
   // Update UI
   updateGameState();
@@ -224,7 +230,9 @@ function startTimer() {
 function endRound() {
   gameState.roundInProgress = false;
   document.querySelector("#timer").textContent = "Round ended!";
-  document.querySelector("#start-game").style.display = "block"; // Show start button after round
+
+  // Clear all canvases
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   // Show all guesses to the drawer
   if (
@@ -234,10 +242,60 @@ function endRound() {
     showGuessesToDrawer();
   }
 
-  // Wait 5 seconds before allowing next round to start
-  setTimeout(() => {
-    document.querySelector("#start-game").disabled = false;
-  }, 5000);
+  // Increment round counter
+  gameState.currentRound++;
+
+  // Check if game is over
+  if (gameState.currentRound >= gameState.maxRounds) {
+    endGame();
+    return;
+  }
+
+  // Select next drawer
+  const nextDrawer =
+    gameState.players[gameState.currentRound % gameState.players.length];
+  gameState.currentDrawer = nextDrawer;
+  gameState.currentWord = words[Math.floor(Math.random() * words.length)];
+
+  // Update UI
+  updateGameState();
+
+  // Broadcast new game state
+  broadcastGameState();
+
+  // Start next round after a short delay
+  setTimeout(startNewRound, 3000);
+}
+
+function endGame() {
+  // Show final scores
+  const scoresElement = document.querySelector("#scores");
+  scoresElement.innerHTML = "<h2>Game Over! Final Scores:</h2>";
+
+  // Sort players by score
+  const sortedPlayers = [...gameState.scores.entries()].sort(
+    (a, b) => b[1] - a[1]
+  );
+
+  sortedPlayers.forEach(([playerId, score]) => {
+    const nickname = gameState.nicknames.get(playerId) || playerId;
+    const scoreElement = document.createElement("div");
+    scoreElement.className = "player-score";
+    scoreElement.innerHTML = `<span>${nickname}: ${score}</span>`;
+    scoresElement.appendChild(scoreElement);
+  });
+
+  // Show restart button
+  const startButton = document.querySelector("#start-game");
+  startButton.textContent = "Play Again";
+  startButton.style.display = "block";
+  startButton.addEventListener("click", () => {
+    gameState.currentRound = 0;
+    gameState.scores.clear();
+    gameState.guesses.clear();
+    updateScoresDisplay();
+    startNewRound();
+  });
 }
 
 function showGuessesToDrawer() {
@@ -245,10 +303,11 @@ function showGuessesToDrawer() {
   guessesList.innerHTML = "";
 
   gameState.guesses.forEach((guess, playerId) => {
+    const nickname = gameState.nicknames.get(playerId) || playerId;
     const guessElement = document.createElement("div");
     guessElement.className = "guess-item";
     guessElement.innerHTML = `
-      <span>${playerId}: ${guess}</span>
+      <span>${nickname}: ${guess}</span>
       <div>
         <button onclick="markGuess('${playerId}', true)">Correct</button>
         <button onclick="markGuess('${playerId}', false)">Incorrect</button>
@@ -323,8 +382,32 @@ function submitGuess() {
       gameState.guesses.set(myId, guess);
       updateChatMessages();
 
+      // Check if all players have guessed
+      checkAllPlayersGuessed();
+
       // Clear input
       guessInput.value = "";
+    }
+  }
+}
+
+function checkAllPlayersGuessed() {
+  // Get all players except the current drawer
+  const guessers = gameState.players.filter(
+    (p) => p !== gameState.currentDrawer
+  );
+
+  // Check if all guessers have submitted a guess
+  const allGuessed = guessers.every((playerId) =>
+    gameState.guesses.has(playerId)
+  );
+
+  if (allGuessed) {
+    // Instead of ending the round, just notify the drawer
+    const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+    if (gameState.currentDrawer === myId) {
+      const wordDisplay = document.querySelector("#word-display");
+      wordDisplay.textContent = `All players have guessed! Evaluate their guesses before time runs out.`;
     }
   }
 }
@@ -346,7 +429,10 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function markGuess(playerId, isCorrect) {
-  if (!gameState.roundInProgress) {
+  if (
+    gameState.currentDrawer ===
+    b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6)
+  ) {
     if (isCorrect) {
       // Add points
       const guesserScore = gameState.scores.get(playerId) || 0;
@@ -381,6 +467,25 @@ function markGuess(playerId, isCorrect) {
       }
     }
     updateScoresDisplay();
+
+    // Check if all guesses have been evaluated
+    const guessers = gameState.players.filter(
+      (p) => p !== gameState.currentDrawer
+    );
+    const allEvaluated = guessers.every((playerId) => {
+      const messageElement = document.querySelector(
+        `[data-player="${playerId}"]`
+      );
+      return (
+        messageElement &&
+        messageElement.querySelector(".guess-actions") === null
+      );
+    });
+
+    if (allEvaluated) {
+      // All guesses have been evaluated, end the round
+      endRound();
+    }
   }
 }
 
@@ -404,17 +509,29 @@ function updateGameState() {
   // Update word display
   const wordDisplay = document.querySelector("#word-display");
   if (isDrawer) {
-    wordDisplay.textContent = `Draw this: ${gameState.currentWord}`;
+    if (gameState.roundInProgress) {
+      wordDisplay.textContent = `Draw this: ${gameState.currentWord} (Round ${
+        gameState.currentRound + 1
+      }/${gameState.maxRounds})`;
+    } else {
+      wordDisplay.textContent = `You're the next drawer! (Round ${
+        gameState.currentRound + 1
+      }/${gameState.maxRounds})`;
+    }
   } else {
-    wordDisplay.textContent = "Guess what's being drawn!";
+    wordDisplay.textContent = `Guess what's being drawn! (Round ${
+      gameState.currentRound + 1
+    }/${gameState.maxRounds})`;
   }
 
   // Update UI elements based on role
-  document.querySelector("#tools").style.display = isDrawer ? "flex" : "none";
+  document.querySelector("#tools").style.display =
+    isDrawer && gameState.roundInProgress ? "flex" : "none";
   document.querySelector("#guessing-area").style.display = isDrawer
     ? "none"
     : "flex";
-  document.querySelector("#start-game").style.display = "none"; // Hide start button during round
+  document.querySelector("#start-game").style.display = "none";
+  document.querySelector("#ready-to-draw").classList.add("hidden");
 }
 
 function setupDrawingEvents() {
@@ -536,6 +653,9 @@ function handleGameData(data) {
           scores: new Map(Object.entries(newState.scores)),
           guesses: new Map(Object.entries(newState.guesses)),
           nicknames: new Map(Object.entries(newState.nicknames)),
+          currentRound: newState.currentRound,
+          maxRounds: newState.maxRounds,
+          players: newState.players,
         };
         updateGameState();
         updateChatMessages();
