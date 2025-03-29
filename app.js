@@ -150,10 +150,19 @@ function initializeGame() {
   gameState.scores.set(myId, 0);
   updateScoresDisplay();
 
-  // Start the game if we're the first player
-  if (swarm.connections.size === 0) {
-    startNewRound();
-  }
+  // Add event listener for start button
+  const startButton = document.querySelector("#start-game");
+  startButton.addEventListener("click", () => {
+    if (swarm.connections.size > 0) {
+      startNewRound();
+    } else {
+      alert("Please wait for other players to join before starting!");
+    }
+  });
+
+  // Hide tools initially
+  document.querySelector("#tools").style.display = "none";
+  document.querySelector("#guessing-area").style.display = "none";
 }
 
 function startNewRound() {
@@ -203,6 +212,7 @@ function startTimer() {
 function endRound() {
   gameState.roundInProgress = false;
   document.querySelector("#timer").textContent = "Round ended!";
+  document.querySelector("#start-game").style.display = "block"; // Show start button after round
 
   // Show all guesses to the drawer
   if (
@@ -212,8 +222,10 @@ function endRound() {
     showGuessesToDrawer();
   }
 
-  // Wait 5 seconds before starting next round
-  setTimeout(startNewRound, 5000);
+  // Wait 5 seconds before allowing next round to start
+  setTimeout(() => {
+    document.querySelector("#start-game").disabled = false;
+  }, 5000);
 }
 
 function showGuessesToDrawer() {
@@ -234,6 +246,92 @@ function showGuessesToDrawer() {
   });
 }
 
+function updateChatMessages() {
+  const chatMessages = document.querySelector("#chat-messages");
+  chatMessages.innerHTML = "";
+
+  gameState.guesses.forEach((guess, playerId) => {
+    const messageElement = document.createElement("div");
+    messageElement.className = "chat-message";
+    messageElement.setAttribute("data-player", playerId);
+
+    const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+    const isDrawer = gameState.currentDrawer === myId;
+    const isMyGuess = playerId === myId;
+
+    if (isDrawer) {
+      // Drawer sees all guesses with checkmark and cross buttons
+      messageElement.innerHTML = `
+        <span>${playerId}: ${guess}</span>
+        <div class="guess-actions">
+          <button class="action-button correct-btn">✓</button>
+          <button class="action-button incorrect-btn">✗</button>
+        </div>
+      `;
+
+      // Add event listeners to the buttons
+      const correctBtn = messageElement.querySelector(".correct-btn");
+      const incorrectBtn = messageElement.querySelector(".incorrect-btn");
+
+      correctBtn.addEventListener("click", () => markGuess(playerId, true));
+      incorrectBtn.addEventListener("click", () => markGuess(playerId, false));
+    } else if (isMyGuess) {
+      // Players see their own guesses
+      messageElement.innerHTML = `<span>Your guess: ${guess}</span>`;
+    }
+    chatMessages.appendChild(messageElement);
+  });
+
+  // Scroll to bottom
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function submitGuess() {
+  if (gameState.roundInProgress) {
+    const guessInput = document.querySelector("#guess-input");
+    const guess = guessInput.value.trim().toLowerCase();
+
+    if (guess) {
+      const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+
+      // Send guess to all players
+      const guessData = {
+        type: "guess",
+        playerId: myId,
+        guess: guess,
+      };
+
+      const peers = [...swarm.connections];
+      for (const peer of peers) {
+        peer.write(JSON.stringify(guessData));
+      }
+
+      // Update local state
+      gameState.guesses.set(myId, guess);
+      updateChatMessages();
+
+      // Clear input
+      guessInput.value = "";
+    }
+  }
+}
+
+// Add event listeners for guess submission
+document.addEventListener("DOMContentLoaded", () => {
+  const guessInput = document.querySelector("#guess-input");
+  const submitButton = document.querySelector("#submit-guess");
+
+  // Submit on button click
+  submitButton.addEventListener("click", submitGuess);
+
+  // Submit on Enter key
+  guessInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") {
+      submitGuess();
+    }
+  });
+});
+
 function markGuess(playerId, isCorrect) {
   if (!gameState.roundInProgress) {
     if (isCorrect) {
@@ -244,11 +342,29 @@ function markGuess(playerId, isCorrect) {
       gameState.scores.set(gameState.currentDrawer, drawerScore + 1);
 
       // Mark guess as correct
-      const guessElement = document.querySelector(
+      const messageElement = document.querySelector(
         `[data-player="${playerId}"]`
       );
-      if (guessElement) {
-        guessElement.classList.add("correct");
+      if (messageElement) {
+        messageElement.classList.add("correct");
+        // Remove the action buttons
+        const actions = messageElement.querySelector(".guess-actions");
+        if (actions) {
+          actions.innerHTML = "✓ Correct!";
+        }
+      }
+    } else {
+      // Mark guess as incorrect
+      const messageElement = document.querySelector(
+        `[data-player="${playerId}"]`
+      );
+      if (messageElement) {
+        messageElement.classList.add("incorrect");
+        // Remove the action buttons
+        const actions = messageElement.querySelector(".guess-actions");
+        if (actions) {
+          actions.innerHTML = "✗ Incorrect";
+        }
       }
     }
     updateScoresDisplay();
@@ -284,24 +400,7 @@ function updateGameState() {
   document.querySelector("#guessing-area").style.display = isDrawer
     ? "none"
     : "flex";
-}
-
-function submitGuess() {
-  if (gameState.roundInProgress) {
-    const guessInput = document.querySelector("#guess-input");
-    const guess = guessInput.value.trim().toLowerCase();
-
-    if (guess) {
-      const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
-      gameState.guesses.set(myId, guess);
-
-      // Send guess to all players
-      broadcastGameState();
-
-      // Clear input
-      guessInput.value = "";
-    }
-  }
+  document.querySelector("#start-game").style.display = "none"; // Hide start button during round
 }
 
 function setupDrawingEvents() {
@@ -382,16 +481,37 @@ function handleGameData(data) {
 
     switch (gameData.type) {
       case "draw":
+        // Set the color and tool before drawing
+        const originalColor = currentColor;
+        const originalTool = currentTool;
+        currentColor = gameData.color;
+        currentTool = gameData.tool;
+
         drawLine(gameData.fromX, gameData.fromY, gameData.toX, gameData.toY);
+
+        // Restore original color and tool
+        currentColor = originalColor;
+        currentTool = originalTool;
         break;
       case "gameState":
         // Update game state from received data
-        gameState = { ...gameState, ...gameData.state };
+        const newState = gameData.state;
+        gameState = {
+          ...gameState,
+          currentDrawer: newState.currentDrawer,
+          currentWord: newState.currentWord,
+          roundInProgress: newState.roundInProgress,
+          timeLeft: newState.timeLeft,
+          scores: new Map(Object.entries(newState.scores)),
+          guesses: new Map(Object.entries(newState.guesses)),
+        };
         updateGameState();
+        updateChatMessages();
         break;
       case "guess":
         // Update guesses from received data
         gameState.guesses.set(gameData.playerId, gameData.guess);
+        updateChatMessages();
         break;
     }
   } catch (e) {
@@ -400,9 +520,17 @@ function handleGameData(data) {
 }
 
 function broadcastGameState() {
+  // Convert Map to Object for JSON serialization
+  const scoresObject = Object.fromEntries(gameState.scores);
+  const guessesObject = Object.fromEntries(gameState.guesses);
+
   const gameData = {
     type: "gameState",
-    state: gameState,
+    state: {
+      ...gameState,
+      scores: scoresObject,
+      guesses: guessesObject,
+    },
   };
 
   const peers = [...swarm.connections];
