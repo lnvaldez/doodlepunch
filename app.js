@@ -6,8 +6,6 @@ import Hyperswarm from "hyperswarm"; // Module for P2P networking and connecting
 import crypto from "hypercore-crypto"; // Cryptographic functions for generating the key in app
 import b4a from "b4a"; // Module for buffer-to-string and vice-versa conversions
 const { teardown, updates } = Pear; // Functions for cleanup and updates
-import * as tf from "@tensorflow/tfjs";
-import { load } from "@tensorflow-models/universal-sentence-encoder";
 import { spawn } from "child_process";
 import { words } from "./words";
 
@@ -75,142 +73,6 @@ document.querySelectorAll(".tool-button").forEach((button) => {
 // Color picker
 document.querySelector("#color-picker").addEventListener("input", (e) => {
   currentColor = e.target.value;
-});
-
-// Add this to the top of your app.js
-console.log("TensorFlow.js version:", tf.version);
-
-// Improved model initialization with status tracking
-let similarityModel = null;
-let tensorflowStatus = "loading"; // "loading", "ready", "failed"
-
-// Initialize model with better logging and verification
-async function initializeModel() {
-  try {
-    console.log("Starting TensorFlow model initialization...");
-    tensorflowStatus = "loading";
-
-    // Add a notification that the model is loading
-    showNotification("Loading AI similarity model...", 3000);
-
-    // Load the model
-    similarityModel = await load();
-
-    // Test if the model works
-    if (similarityModel) {
-      console.log("Model loaded, testing functionality...");
-
-      // Test with two simple words
-      const testEmbeddings = await similarityModel.embed(["test", "testing"]);
-      const testTensor1 = testEmbeddings.slice([0, 0], [1]);
-      const testTensor2 = testEmbeddings.slice([1, 0], [1]);
-
-      // Calculate similarity for test words
-      const testDotProduct = tf.sum(tf.mul(testTensor1, testTensor2));
-      const testNorm1 = tf.sqrt(tf.sum(tf.square(testTensor1)));
-      const testNorm2 = tf.sqrt(tf.sum(tf.square(testTensor2)));
-      const testSimilarity = tf.div(
-        testDotProduct,
-        tf.mul(testNorm1, testNorm2)
-      );
-
-      // Get the actual value
-      const testValue = testSimilarity.dataSync()[0];
-      console.log("Test similarity calculation:", testValue);
-
-      if (testValue > 0) {
-        console.log("✅ TensorFlow model verified and working!");
-        tensorflowStatus = "ready";
-        showNotification("AI model loaded successfully!", 3000);
-      } else {
-        console.error("❌ Model loaded but similarity calculation failed");
-        tensorflowStatus = "failed";
-      }
-    } else {
-      console.error("❌ Failed to load model");
-      tensorflowStatus = "failed";
-      showNotification("AI model failed to load. Using fallback mode.", 5000);
-    }
-  } catch (error) {
-    console.error("❌ Error initializing TensorFlow model:", error);
-    tensorflowStatus = "failed";
-    showNotification("AI model error: " + error.message, 5000);
-  }
-}
-
-// Enhanced similarity function with debugging
-async function localEvaluateSimilarity(word1, word2) {
-  console.log(
-    `Comparing "${word1}" with "${word2}" (TensorFlow status: ${tensorflowStatus})`
-  );
-
-  // Exact match check
-  if (word1.toLowerCase() === word2.toLowerCase()) {
-    console.log("✅ Exact match detected!");
-    return { similarity: 1.0, method: "exact-match" };
-  }
-
-  // If TensorFlow is ready, use it
-  if (tensorflowStatus === "ready" && similarityModel) {
-    try {
-      console.log("Using TensorFlow for similarity calculation");
-
-      // Get embeddings
-      const embeddings = await similarityModel.embed([word1, word2]);
-
-      // Log embedding shape info for debugging
-      console.log("Embedding dimensions:", embeddings.shape);
-
-      // Get vectors
-      const vec1 = embeddings.slice([0, 0], [1]);
-      const vec2 = embeddings.slice([1, 0], [1]);
-
-      // Calculate cosine similarity step by step
-      const dotProduct = tf.sum(tf.mul(vec1, vec2));
-      const norm1 = tf.sqrt(tf.sum(tf.square(vec1)));
-      const norm2 = tf.sqrt(tf.sum(tf.square(vec2)));
-
-      // Log intermediate values
-      console.log("Dot product:", dotProduct.dataSync()[0]);
-      console.log("Norm1:", norm1.dataSync()[0]);
-      console.log("Norm2:", norm2.dataSync()[0]);
-
-      // Final calculation
-      const similarityValue = tf.div(dotProduct, tf.mul(norm1, norm2));
-      const result = similarityValue.dataSync()[0];
-
-      console.log(`✅ TensorFlow similarity: ${result}`);
-      return {
-        similarity: Math.max(0, Math.min(1, result)),
-        method: "tensorflow",
-      };
-    } catch (error) {
-      console.error("❌ TensorFlow calculation error:", error);
-      // Fall through to fallback
-    }
-  }
-
-  console.log("Using fallback similarity calculation");
-
-  // Fallback calculation
-  const fallbackResult = calculateFallbackSimilarity(word1, word2);
-  console.log(`ℹ️ Fallback similarity: ${fallbackResult.similarity}`);
-  return { ...fallbackResult, method: "fallback" };
-}
-
-// Separate function for fallback calculation
-function calculateFallbackSimilarity(word1, word2) {
-  // Your existing fallback code
-  // [...]
-
-  // For now, return a simple example
-  return { similarity: 0.3 };
-}
-
-// Call this immediately
-document.addEventListener("DOMContentLoaded", () => {
-  console.log("DOM loaded, initializing TensorFlow...");
-  initializeModel();
 });
 
 async function createGameRoom() {
@@ -427,24 +289,6 @@ function endGame() {
   });
 }
 
-function showGuessesToDrawer() {
-  const guessesList = document.querySelector("#guesses-list");
-  guessesList.innerHTML = "";
-
-  gameState.guesses.forEach((guess, playerId) => {
-    const nickname = gameState.nicknames.get(playerId) || playerId;
-    const guessElement = document.createElement("div");
-    guessElement.className = "guess-item";
-    guessElement.innerHTML = `
-      <span>${nickname}: ${guess}</span>
-      <div>
-        <button onclick="markGuess('${playerId}', true)">Correct</button>
-        <button onclick="markGuess('${playerId}', false)">Incorrect</button>
-      </div>
-    `;
-    guessesList.appendChild(guessElement);
-  });
-}
 
 function updateChatMessages() {
   const chatMessages = document.querySelector("#chat-messages");
@@ -504,7 +348,7 @@ function compareWords(word1, word2) {
   });
 }
 
-// Example usage in your application
+
 async function submitGuess() {
   if (gameState.roundInProgress) {
     const guessInput = document.querySelector("#guess-input");
@@ -514,9 +358,9 @@ async function submitGuess() {
       const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
 
       try {
-        showNotification("Evaluating your guess...", 2000);
+        showNotification("Evaluando tu respuesta...", 2000);
 
-        // Use the compareWords function to get similarity
+        // Usar el script de Python para la comparación
         const similarity = await compareWords(gameState.currentWord, guess);
         const points = calculatePoints(similarity);
 
@@ -528,27 +372,22 @@ async function submitGuess() {
         gameState.guesses.set(myId, {
           text: guess,
           points: points,
-          similarity: similarity,
+          similarity: similarity
         });
 
-        // Show notification with points awarded
-        showNotification(
-          `${points} points awarded! (${Math.round(
-            similarity * 100
-          )}% similar)`,
-          3000
-        );
+        // Mostrar notificación con puntos
+        showNotification(`${points} puntos! (${Math.round(similarity * 100)}% similar)`, 3000);
 
-        // Broadcast updated guess and score to all players
+        // Broadcast del guess y score
         const guessData = {
           type: "aiGuess",
           playerId: myId,
           guess: {
             text: guess,
             points: points,
-            similarity: similarity,
+            similarity: similarity
           },
-          currentScore: gameState.scores.get(myId),
+          currentScore: gameState.scores.get(myId)
         };
 
         const peers = [...swarm.connections];
@@ -561,8 +400,8 @@ async function submitGuess() {
         checkAllPlayersGuessed();
         guessInput.value = "";
       } catch (error) {
-        console.error("Evaluation error:", error);
-        showNotification("Evaluation failed. Please try again.", 2000);
+        console.error("Error en la evaluación:", error);
+        showNotification("Error al evaluar la respuesta. Por favor intenta de nuevo.", 2000);
       }
     }
   }
@@ -575,31 +414,6 @@ function calculatePoints(similarity) {
   return 0;
 }
 
-function clearTimer() {
-  const timerElement = document.querySelector("#timer");
-  timerElement.textContent = "";
-}
-
-function checkAllPlayersGuessed() {
-  // Get all players except the current drawer
-  const guessers = gameState.players.filter(
-    (p) => p !== gameState.currentDrawer
-  );
-
-  // Check if all guessers have submitted a guess
-  const allGuessed = guessers.every((playerId) =>
-    gameState.guesses.has(playerId)
-  );
-
-  if (allGuessed) {
-    // Notify the drawer
-    const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
-    if (gameState.currentDrawer === myId) {
-      const wordDisplay = document.querySelector("#word-display");
-      wordDisplay.textContent = `All players have guessed! Evaluate their guesses.`;
-    }
-  }
-}
 
 // Add event listeners for guess submission
 document.addEventListener("DOMContentLoaded", () => {
@@ -617,65 +431,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-function markGuess(playerId, isCorrect) {
-  if (
-    gameState.currentDrawer ===
-    b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6)
-  ) {
-    if (isCorrect) {
-      // Add points
-      const guesserScore = gameState.scores.get(playerId) || 0;
-      const drawerScore = gameState.scores.get(gameState.currentDrawer) || 0;
-      gameState.scores.set(playerId, guesserScore + 3);
-      gameState.scores.set(gameState.currentDrawer, drawerScore + 1);
-
-      // Mark guess as correct
-      const messageElement = document.querySelector(
-        `[data-player="${playerId}"]`
-      );
-      if (messageElement) {
-        messageElement.classList.add("correct");
-        // Remove the action buttons
-        const actions = messageElement.querySelector(".guess-actions");
-        if (actions) {
-          actions.innerHTML = "✓ Correct!";
-        }
-      }
-    } else {
-      // Mark guess as incorrect
-      const messageElement = document.querySelector(
-        `[data-player="${playerId}"]`
-      );
-      if (messageElement) {
-        messageElement.classList.add("incorrect");
-        // Remove the action buttons
-        const actions = messageElement.querySelector(".guess-actions");
-        if (actions) {
-          actions.innerHTML = "✗ Incorrect";
-        }
-      }
-    }
-    updateScoresDisplay();
-
-    // Send evaluation to all players
-    const evaluationData = {
-      type: "evaluation",
-      playerId: playerId,
-      isCorrect: isCorrect,
-      scores: Object.fromEntries(gameState.scores),
-    };
-
-    const peers = [...swarm.connections];
-    for (const peer of peers) {
-      peer.write(JSON.stringify(evaluationData));
-    }
-
-    // End the round after evaluating the guess
-    setTimeout(() => {
-      endRound();
-    }, 2000);
-  }
-}
 
 function updateScoresDisplay() {
   const scoresElement = document.querySelector("#scores");
@@ -735,7 +490,6 @@ function updateGameState() {
     ? "none"
     : "flex";
   document.querySelector("#start-game").style.display = "none";
-  document.querySelector("#ready-to-draw").classList.add("hidden");
 }
 
 function setupDrawingEvents() {
@@ -853,33 +607,7 @@ function handleGameData(data) {
         updateChatMessages();
         updateScoresDisplay();
         break;
-      case "evaluation":
-        // Update the UI to show the evaluation to the guesser
-        const messageElement = document.querySelector(
-          `[data-player="${gameData.playerId}"]`
-        );
-        if (messageElement) {
-          messageElement.classList.add(
-            gameData.isCorrect ? "correct" : "incorrect"
-          );
-          const result = gameData.isCorrect ? "✓ Correct!" : "✗ Incorrect";
 
-          // For players seeing their own guesses
-          if (
-            gameData.playerId ===
-            b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6)
-          ) {
-            messageElement.innerHTML = `<span>Your guess: ${messageElement.textContent.replace(
-              "Your guess: ",
-              ""
-            )} ${result}</span>`;
-          }
-        }
-
-        // Update scores
-        gameState.scores = new Map(Object.entries(gameData.scores));
-        updateScoresDisplay();
-        break;
       case "gameState":
         // Update game state from received data
         const newState = gameData.state;
@@ -923,11 +651,6 @@ function handleGameData(data) {
           }
           timerElement.textContent = "";
         }
-        break;
-      case "guess":
-        // Update guesses from received data (old format)
-        gameState.guesses.set(gameData.playerId, gameData.guess);
-        updateChatMessages();
         break;
       case "clear":
         ctx.clearRect(0, 0, canvas.width, canvas.height);
