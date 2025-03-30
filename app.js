@@ -391,6 +391,8 @@ function endGame() {
 function updateChatMessages() {
   const chatMessages = document.querySelector("#chat-messages");
   chatMessages.innerHTML = "";
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+  const isDrawer = gameState.currentDrawer === myId;
 
   gameState.guesses.forEach((guessData, playerId) => {
     const messageElement = document.createElement("div");
@@ -415,12 +417,11 @@ function updateChatMessages() {
     } else {
       // Verified or normal guess
       const points = guessData.points || 0;
-      const similarity = guessData.similarity
-        ? Math.round(guessData.similarity * 100)
-        : 0;
+      const similarity = guessData.similarity || 0;
+      const isCorrect = guessData.isCorrect || points === 3;
 
       let pointsClass = "";
-      if (points === 3) pointsClass = "correct";
+      if (isCorrect) pointsClass = "correct";
       else if (points > 0) pointsClass = "partial";
 
       let verificationText = "";
@@ -428,11 +429,21 @@ function updateChatMessages() {
         verificationText = `<span class="verification-status">✓ Verified by ${guessData.verifications} players</span>`;
       }
 
+      // Determine what text to display
+      let displayText = guessData.text;
+
+      // If it's a correct guess but I'm not the guesser and not the drawer, hide the actual word
+      if (isCorrect && playerId !== myId && !isDrawer) {
+        displayText = "Correct word! ✓"; // Just indicate it was correct without showing the word
+      }
+
       messageElement.innerHTML = `
         <div class="guess-result">
-          <span class="guess-text">${nickname}: ${guessData.text}</span>
+          <span class="guess-text">${nickname}: ${displayText}</span>
           <span class="guess-points ${pointsClass}">${points} points</span>
-          <span class="guess-similarity">${similarity}% match</span>
+          <span class="guess-similarity">similarity: ${similarity.toFixed(
+            4
+          )}</span>
           ${verificationText}
         </div>
       `;
@@ -475,6 +486,7 @@ async function submitGuess() {
         // Use the Python script for comparison
         const similarity = await compareWords(gameState.currentWord, guess);
         const points = calculatePoints(similarity);
+        const isCorrect = points === 3;
 
         // Update scores
         const currentScore = gameState.scores.get(myId) || 0;
@@ -485,25 +497,39 @@ async function submitGuess() {
           text: guess,
           points: points,
           similarity: similarity,
+          isCorrect: isCorrect,
         });
 
         // Show notification with points
         showNotification(
-          `${points} points! (${Math.round(similarity * 100)}% similar)`,
+          `${points} points! (similarity: ${similarity.toFixed(4)})`,
           3000
         );
 
         // Also broadcast for verification (silently in the background)
         const guessId = broadcastGuessForVerification(guess, myId);
 
-        // Create the guess data to broadcast
-        const guessData = {
+        // Create two versions of the guess data - one for the drawer and one for other players
+        const guessDataForDrawer = {
           type: "aiGuess",
           playerId: myId,
           guess: {
-            text: guess,
+            text: guess, // Actual guess for the drawer
             points: points,
             similarity: similarity,
+            isCorrect: isCorrect,
+          },
+          currentScore: gameState.scores.get(myId),
+        };
+
+        const guessDataForOthers = {
+          type: "aiGuess",
+          playerId: myId,
+          guess: {
+            text: isCorrect ? "Correct word! ✓" : guess, // Hide the exact word if correct
+            points: points,
+            similarity: similarity,
+            isCorrect: isCorrect,
           },
           currentScore: gameState.scores.get(myId),
         };
@@ -511,7 +537,14 @@ async function submitGuess() {
         // Send to all peers
         const peers = [...swarm.connections];
         for (const peer of peers) {
-          peer.write(JSON.stringify(guessData));
+          const peerId = b4a.toString(peer.remotePublicKey, "hex").substr(0, 6);
+
+          // Only the drawer sees the actual correct word
+          if (peerId === gameState.currentDrawer) {
+            peer.write(JSON.stringify(guessDataForDrawer));
+          } else {
+            peer.write(JSON.stringify(guessDataForOthers));
+          }
         }
 
         updateChatMessages();
@@ -519,7 +552,7 @@ async function submitGuess() {
         guessInput.value = "";
 
         // If this is a winning guess (3 points)
-        if (points === 3) {
+        if (isCorrect) {
           // Halve the timer
           gameState.timeLeft = Math.floor(gameState.timeLeft / 2);
           const timerElement = document.querySelector("#timer");
@@ -1562,12 +1595,13 @@ function showRoundVerificationResults() {
     if (!guessData) return; // Skip if we can't find the guess
 
     foundResults = true;
+    // Now we can show the actual guess since the round is over
     const guessText = guessData[1].text;
     const nickname =
       gameState.nicknames.get(guessingPlayerId) ||
       `Player ${guessingPlayerId.substr(0, 4)}`;
 
-    // Add guess column
+    // Add guess column - At round end, we can show the actual word
     const guessCell = document.createElement("td");
     guessCell.textContent = guessText;
     guessCell.style.padding = "8px";
@@ -1594,7 +1628,7 @@ function showRoundVerificationResults() {
 
       if (results.has(playerId)) {
         const result = results.get(playerId);
-        verifierCell.textContent = `${Math.round(result.similarity * 100)}%`;
+        verifierCell.textContent = result.similarity.toFixed(4); // Raw similarity value
         totalSimilarity += result.similarity;
         verifierCount++;
       } else {
@@ -1612,7 +1646,7 @@ function showRoundVerificationResults() {
 
     if (verifierCount > 0) {
       const avgSimilarity = totalSimilarity / verifierCount;
-      consensusCell.textContent = `${Math.round(avgSimilarity * 100)}%`;
+      consensusCell.textContent = avgSimilarity.toFixed(4); // Raw similarity value
     } else {
       consensusCell.textContent = "N/A";
     }
