@@ -43,14 +43,34 @@ updates(() => Pear.reload());
 
 // When there's a new connection, listen for new game data
 swarm.on("connection", (peer) => {
-  const name = b4a.toString(peer.remotePublicKey, "hex").substr(0, 6);
-  peer.on("data", (data) => handleGameData(data));
-  peer.on("error", (e) => console.log(`Connection error: ${e}`));
+  try {
+    const name = b4a.toString(peer.remotePublicKey, "hex").substr(0, 6);
+    console.log("New peer connected:", name);
+
+    peer.on("data", (data) => {
+      console.log(`Received data from ${name}`);
+      handleGameData(data);
+    });
+
+    peer.on("error", (e) => {
+      console.error(`Connection error with peer ${name}:`, e);
+    });
+
+    peer.on("close", () => {
+      console.log(`Peer ${name} disconnected`);
+    });
+  } catch (error) {
+    console.error("Error handling new connection:", error);
+  }
 });
 
 // When there's updates to the swarm, update the peers count
 swarm.on("update", () => {
-  document.querySelector("#peers-count").textContent = swarm.connections.size;
+  console.log("Swarm updated, connections:", swarm.connections.size);
+  const peersCount = document.querySelector("#peers-count");
+  if (peersCount) {
+    peersCount.textContent = swarm.connections.size;
+  }
 });
 
 document
@@ -76,13 +96,22 @@ document.querySelector("#color-picker").addEventListener("input", (e) => {
 });
 
 async function createGameRoom() {
-  const nickname = document.querySelector("#nickname-input").value.trim();
-  if (!nickname) {
-    alert("Please enter a nickname!");
-    return;
+  try {
+    const nickname = document.querySelector("#nickname-input").value.trim();
+    if (!nickname) {
+      alert("Please enter a nickname!");
+      return;
+    }
+    console.log("Creating game room with nickname:", nickname);
+    const topicBuffer = crypto.randomBytes(32);
+    await joinSwarm(topicBuffer, nickname);
+  } catch (error) {
+    console.error("Error creating game room:", error);
+    alert("Failed to create game room: " + error.message);
+    // Reset UI to initial state
+    document.querySelector("#loading").classList.add("hidden");
+    document.querySelector("#setup").classList.remove("hidden");
   }
-  const topicBuffer = crypto.randomBytes(32);
-  joinSwarm(topicBuffer, nickname);
 }
 
 async function joinGameRoom(e) {
@@ -98,65 +127,104 @@ async function joinGameRoom(e) {
 }
 
 async function joinSwarm(topicBuffer, nickname) {
-  document.querySelector("#setup").classList.add("hidden");
-  document.querySelector("#loading").classList.remove("hidden");
+  try {
+    document.querySelector("#setup").classList.add("hidden");
+    document.querySelector("#loading").classList.remove("hidden");
 
-  const discovery = swarm.join(topicBuffer, { client: true, server: true });
-  await discovery.flushed();
+    console.log("Joining swarm with nickname:", nickname);
+    const discovery = swarm.join(topicBuffer, { client: true, server: true });
+    await discovery.flushed();
 
-  const topic = b4a.toString(topicBuffer, "hex");
-  document.querySelector("#chat-room-topic").innerText = topic;
-  document.querySelector("#loading").classList.add("hidden");
-  document.querySelector("#game-board").classList.remove("hidden");
+    const topic = b4a.toString(topicBuffer, "hex");
+    console.log("Game room created with topic:", topic);
+    document.querySelector("#chat-room-topic").innerText = topic;
+    document.querySelector("#loading").classList.add("hidden");
+    document.querySelector("#game-board").classList.remove("hidden");
 
-  // Initialize canvas
-  canvas = document.getElementById("canvas");
-  ctx = canvas.getContext("2d");
+    // Initialize canvas
+    canvas = document.getElementById("canvas");
+    ctx = canvas.getContext("2d");
 
-  // Set canvas size to container size
-  const container = document.getElementById("canvas-container");
-  canvas.width = container.clientWidth;
-  canvas.height = container.clientHeight;
+    // Set canvas size to container size
+    const container = document.getElementById("canvas-container");
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
 
-  // Set up drawing event listeners
-  setupDrawingEvents();
+    // Set up drawing event listeners
+    setupDrawingEvents();
 
-  // Initialize game state with nickname
-  initializeGame(nickname);
+    // Initialize game state with nickname
+    initializeGame(nickname);
+  } catch (error) {
+    console.error("Error joining swarm:", error);
+    alert("Failed to join game room: " + error.message);
+    // Reset UI to initial state
+    document.querySelector("#loading").classList.add("hidden");
+    document.querySelector("#setup").classList.remove("hidden");
+  }
 }
 
 function initializeGame(nickname) {
-  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
-  gameState.scores.set(myId, 0);
-  gameState.nicknames.set(myId, nickname);
+  try {
+    console.log("Initializing game with nickname:", nickname);
+    const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+    console.log("Player ID:", myId);
 
-  // Broadcast initial game state with nickname
-  broadcastGameState();
-  updateScoresDisplay();
+    gameState.scores.set(myId, 0);
+    gameState.nicknames.set(myId, nickname);
 
-  // Add event listener for start button
-  const startButton = document.querySelector("#start-game");
-  startButton.addEventListener("click", () => {
-    if (swarm.connections.size > 0) {
-      // Initialize player order when starting the game
-      const players = Array.from(swarm.connections).map((peer) =>
-        b4a.toString(peer.remotePublicKey, "hex").substr(0, 6)
-      );
-      players.push(myId);
-      gameState.players = players;
-      gameState.currentRound = 0;
-      // Set first drawer randomly
-      gameState.currentDrawer =
-        players[Math.floor(Math.random() * players.length)];
-      startNewRound();
+    // Broadcast initial game state with nickname
+    broadcastGameState();
+    updateScoresDisplay();
+
+    // Add event listener for start button
+    const startButton = document.querySelector("#start-game");
+    if (startButton) {
+      // Remove any existing listeners to prevent duplicates
+      const newStartButton = startButton.cloneNode(true);
+      startButton.parentNode.replaceChild(newStartButton, startButton);
+
+      newStartButton.addEventListener("click", () => {
+        console.log(
+          "Start button clicked, connections:",
+          swarm.connections.size
+        );
+        if (swarm.connections.size > 0) {
+          // Initialize player order when starting the game
+          const players = Array.from(swarm.connections).map((peer) =>
+            b4a.toString(peer.remotePublicKey, "hex").substr(0, 6)
+          );
+          players.push(myId);
+          console.log("Players:", players);
+
+          gameState.players = players;
+          gameState.currentRound = 0;
+          // Set first drawer randomly
+          gameState.currentDrawer =
+            players[Math.floor(Math.random() * players.length)];
+          console.log("First drawer:", gameState.currentDrawer);
+
+          startNewRound();
+        } else {
+          alert("Please wait for other players to join before starting!");
+        }
+      });
+      console.log("Added event listener to start button");
     } else {
-      alert("Please wait for other players to join before starting!");
+      console.error("Start button not found!");
     }
-  });
 
-  // Hide tools initially
-  document.querySelector("#tools").style.display = "none";
-  document.querySelector("#guessing-area").style.display = "none";
+    // Hide tools initially
+    const tools = document.querySelector("#tools");
+    const guessingArea = document.querySelector("#guessing-area");
+
+    if (tools) tools.style.display = "none";
+    if (guessingArea) guessingArea.style.display = "none";
+
+    console.log("Game initialized successfully");
+  } catch (error) {
+    console.error("Error initializing game:", error);
+  }
 }
 
 function startNewRound() {
@@ -379,7 +447,7 @@ async function submitGuess() {
           3000
         );
 
-        // Broadcast the guess and score
+        // Create the guess data
         const guessData = {
           type: "aiGuess",
           playerId: myId,
@@ -392,19 +460,44 @@ async function submitGuess() {
         };
 
         const peers = [...swarm.connections];
-        for (const peer of peers) {
-          peer.write(JSON.stringify(guessData));
+
+        if (points === 3) {
+          // Correct guess (3 points) - only send to the drawer
+          // Halve the timer
+          gameState.timeLeft = Math.floor(gameState.timeLeft / 2);
+          const timerElement = document.querySelector("#timer");
+          timerElement.textContent = `Time left: ${gameState.timeLeft}s`;
+
+          // Create a special timer update message for all players
+          const timerData = {
+            type: "timerUpdate",
+            timeLeft: gameState.timeLeft,
+          };
+
+          // Send to all peers
+          for (const peer of peers) {
+            const peerId = b4a
+              .toString(peer.remotePublicKey, "hex")
+              .substr(0, 6);
+
+            // Only send the guess to the drawer
+            if (peerId === gameState.currentDrawer) {
+              peer.write(JSON.stringify(guessData));
+            }
+
+            // Send timer update to everyone
+            peer.write(JSON.stringify(timerData));
+          }
+        } else {
+          // Normal guess (less than 3 points) - broadcast to all
+          for (const peer of peers) {
+            peer.write(JSON.stringify(guessData));
+          }
         }
 
         updateChatMessages();
         updateScoresDisplay();
-        checkAllPlayersGuessed();
         guessInput.value = "";
-
-        // End round if the player receives 3 points
-        if (points === 3) {
-          endRound();
-        }
       } catch (error) {
         console.error("Evaluation error:", error);
       }
@@ -421,18 +514,46 @@ function calculatePoints(similarity) {
 
 // Add event listeners for guess submission
 document.addEventListener("DOMContentLoaded", () => {
-  const guessInput = document.querySelector("#guess-input");
-  const submitButton = document.querySelector("#submit-guess");
+  try {
+    console.log("DOM loaded, setting up event listeners");
 
-  // Submit on button click
-  submitButton.addEventListener("click", submitGuess);
-
-  // Submit on Enter key
-  guessInput.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") {
-      submitGuess();
+    // Create and join game room buttons
+    const createButton = document.querySelector("#create-chat-room");
+    if (createButton) {
+      createButton.addEventListener("click", createGameRoom);
+      console.log("Added event listener to create button");
+    } else {
+      console.error("Create button not found!");
     }
-  });
+
+    const joinForm = document.querySelector("#join-form");
+    if (joinForm) {
+      joinForm.addEventListener("submit", joinGameRoom);
+      console.log("Added event listener to join form");
+    } else {
+      console.error("Join form not found!");
+    }
+
+    // Guess submission
+    const guessInput = document.querySelector("#guess-input");
+    const submitButton = document.querySelector("#submit-guess");
+
+    if (submitButton) {
+      submitButton.addEventListener("click", submitGuess);
+      console.log("Added event listener to submit button");
+    }
+
+    if (guessInput) {
+      guessInput.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") {
+          submitGuess();
+        }
+      });
+      console.log("Added keypress event listener to guess input");
+    }
+  } catch (error) {
+    console.error("Error setting up initial event listeners:", error);
+  }
 });
 
 function updateScoresDisplay() {
@@ -647,7 +768,11 @@ function handleGameData(data) {
         // Update timer display and start/stop timer based on game state
         const timerElement = document.querySelector("#timer");
         if (gameState.roundInProgress) {
-          startTimer(); // Start or restart timer for all players
+          // Restart timer with updated timeLeft
+          if (window.timerInterval) {
+            clearInterval(window.timerInterval);
+          }
+          startTimer();
         } else {
           if (window.timerInterval) {
             clearInterval(window.timerInterval);
@@ -665,6 +790,12 @@ function handleGameData(data) {
           gameState.nicknames.get(playerId) ||
           `Player ${playerId.substr(0, 4)}`;
         showNotification(`${nickname} skipped their guess.`, 2000);
+        break;
+      case "timerUpdate":
+        // Update the timer with the received value
+        gameState.timeLeft = gameData.timeLeft;
+
+        timerElement.textContent = `Time left: ${gameState.timeLeft}s`;
         break;
     }
   } catch (e) {
@@ -752,19 +883,3 @@ function showNotification(message, duration = 3000) {
     }, 300);
   }, duration);
 }
-
-document.addEventListener("DOMContentLoaded", () => {
-  const guessInput = document.querySelector("#guess-input");
-  const submitButton = document.querySelector("#submit-guess");
-  const skipButton = document.querySelector("#skip-guess"); // New Skip button
-
-  // Submit on button click
-  submitButton.addEventListener("click", submitGuess);
-
-  // Submit on Enter key
-  guessInput.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") {
-      submitGuess();
-    }
-  });
-});
