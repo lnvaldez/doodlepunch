@@ -628,8 +628,29 @@ function startDrawing(e) {
     gameState.currentDrawer ===
     b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6)
   ) {
-    isDrawing = true;
-    [lastX, lastY] = getCanvasCoordinates(e);
+    const [x, y] = getCanvasCoordinates(e);
+
+    if (currentTool === "bucket") {
+      // Use the bucket tool
+      floodFill(Math.floor(x), Math.floor(y), currentColor);
+
+      // Send fill data to peers
+      const fillData = {
+        type: "fill",
+        color: currentColor,
+        x: Math.floor(x),
+        y: Math.floor(y),
+      };
+
+      const peers = [...swarm.connections];
+      for (const peer of peers) {
+        peer.write(JSON.stringify(fillData));
+      }
+    } else {
+      // Regular drawing tools
+      isDrawing = true;
+      [lastX, lastY] = [x, y];
+    }
   }
 }
 
@@ -797,6 +818,10 @@ function handleGameData(data) {
 
         timerElement.textContent = `Time left: ${gameState.timeLeft}s`;
         break;
+      case "fill":
+        // Apply the fill operation
+        floodFill(gameData.x, gameData.y, gameData.color);
+        break;
     }
   } catch (e) {
     console.error("Error handling game data:", e);
@@ -882,4 +907,84 @@ function showNotification(message, duration = 3000) {
       notificationContainer.removeChild(notification);
     }, 300);
   }, duration);
+}
+
+// First, we need to add a floodFill function
+function floodFill(startX, startY, fillColor) {
+  // Get the canvas image data
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+
+  // Get the start point color
+  const startPos = (startY * canvas.width + startX) * 4;
+  const startR = data[startPos];
+  const startG = data[startPos + 1];
+  const startB = data[startPos + 2];
+  const startA = data[startPos + 3];
+
+  // Convert fill color to RGBA
+  const fillColorObj = hexToRgb(fillColor);
+  const fillR = fillColorObj.r;
+  const fillG = fillColorObj.g;
+  const fillB = fillColorObj.b;
+  const fillA = 255; // fully opaque
+
+  // If target color is the same as fill color, do nothing
+  if (
+    startR === fillR &&
+    startG === fillG &&
+    startB === fillB &&
+    startA === fillA
+  ) {
+    return;
+  }
+
+  // Queue for pixels to check
+  const queue = [];
+  queue.push([startX, startY]);
+
+  // Process queue
+  while (queue.length > 0) {
+    const [x, y] = queue.shift();
+    const pos = (y * canvas.width + x) * 4;
+
+    // Check if the current pixel has the target color
+    if (
+      x >= 0 &&
+      x < canvas.width &&
+      y >= 0 &&
+      y < canvas.height &&
+      data[pos] === startR &&
+      data[pos + 1] === startG &&
+      data[pos + 2] === startB &&
+      data[pos + 3] === startA
+    ) {
+      // Fill the pixel
+      data[pos] = fillR;
+      data[pos + 1] = fillG;
+      data[pos + 2] = fillB;
+      data[pos + 3] = fillA;
+
+      // Add neighboring pixels to the queue
+      queue.push([x + 1, y]);
+      queue.push([x - 1, y]);
+      queue.push([x, y + 1]);
+      queue.push([x, y - 1]);
+    }
+  }
+
+  // Put the modified image data back on the canvas
+  ctx.putImageData(imageData, 0, 0);
+}
+
+// Utility function to convert hex color to RGB
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16),
+      }
+    : { r: 0, g: 0, b: 0 };
 }
