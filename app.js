@@ -31,6 +31,9 @@ let gameState = {
   currentRound: 0,
   maxRounds: 5,
   players: [], // Array to store player order
+  verificationResults: new Map(), // Map of guess ID -> Map of player ID -> similarity
+  pendingVotes: new Map(), // For end-game verification
+  voteResults: new Map(), // Track vote results
 };
 
 // Unannounce the public key before exiting the process
@@ -296,12 +299,16 @@ function endRound() {
     peer.write(JSON.stringify(clearData));
   }
 
+  // Show verification results before moving to next round
+  showRoundVerificationResults();
+
   // Increment round counter
   gameState.currentRound++;
 
   // Check if game is over
   if (gameState.currentRound >= gameState.maxRounds) {
-    endGame();
+    // Wait for verification results to be shown before ending game
+    setTimeout(endGame, 5000);
     return;
   }
 
@@ -317,8 +324,8 @@ function endRound() {
   // Broadcast new game state
   broadcastGameState();
 
-  // Start next round after a short delay
-  setTimeout(startNewRound, 3000);
+  // Start next round after a longer delay to allow viewing results
+  setTimeout(startNewRound, 8000);
 }
 
 function endGame() {
@@ -348,13 +355,37 @@ function endGame() {
   const startButton = document.querySelector("#start-game");
   startButton.textContent = "Play Again";
   startButton.style.display = "block";
-  startButton.addEventListener("click", () => {
+
+  // Clear existing event listeners
+  const newStartButton = startButton.cloneNode(true);
+  startButton.parentNode.replaceChild(newStartButton, startButton);
+
+  newStartButton.addEventListener("click", () => {
     gameState.currentRound = 0;
     gameState.scores.clear();
     gameState.guesses.clear();
+    gameState.verificationResults.clear();
+    gameState.voteResults.clear();
     updateScoresDisplay();
     startNewRound();
   });
+
+  // Add verification results button
+  const gameControls = document.querySelector("#game-controls");
+
+  // Check if button already exists
+  const existingButton = document.querySelector(".verification-button");
+  if (existingButton) {
+    gameControls.removeChild(existingButton);
+  }
+
+  const verificationButton = document.createElement("button");
+  verificationButton.className = "control-button verification-button";
+  verificationButton.textContent = "View All Verification Results";
+  verificationButton.style.marginTop = "10px";
+  verificationButton.addEventListener("click", showVerificationSummary);
+
+  gameControls.appendChild(verificationButton);
 }
 
 function updateChatMessages() {
@@ -369,12 +400,20 @@ function updateChatMessages() {
     const nickname =
       gameState.nicknames.get(playerId) || `Player ${playerId.substr(0, 4)}`;
 
-    // Handle both old and new guess format
+    // Handle various guess formats
     if (typeof guessData === "string") {
       // Old format - simple string
       messageElement.innerHTML = `<span>${nickname}: ${guessData}</span>`;
+    } else if (guessData.pending) {
+      // Pending verification
+      messageElement.innerHTML = `
+        <div class="guess-result">
+          <span class="guess-text">${nickname}: ${guessData.text}</span>
+          <span class="guess-pending">Verification in progress...</span>
+        </div>
+      `;
     } else {
-      // New format - object with text, points, similarity
+      // Verified or normal guess
       const points = guessData.points || 0;
       const similarity = guessData.similarity
         ? Math.round(guessData.similarity * 100)
@@ -384,11 +423,17 @@ function updateChatMessages() {
       if (points === 3) pointsClass = "correct";
       else if (points > 0) pointsClass = "partial";
 
+      let verificationText = "";
+      if (guessData.verified) {
+        verificationText = `<span class="verification-status">✓ Verified by ${guessData.verifications} players</span>`;
+      }
+
       messageElement.innerHTML = `
         <div class="guess-result">
           <span class="guess-text">${nickname}: ${guessData.text}</span>
           <span class="guess-points ${pointsClass}">${points} points</span>
           <span class="guess-similarity">${similarity}% match</span>
+          ${verificationText}
         </div>
       `;
     }
@@ -424,6 +469,7 @@ async function submitGuess() {
       const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
 
       try {
+        // Show normal notification
         showNotification("Evaluating your guess...", 2000);
 
         // Use the Python script for comparison
@@ -447,7 +493,10 @@ async function submitGuess() {
           3000
         );
 
-        // Create the guess data
+        // Also broadcast for verification (silently in the background)
+        const guessId = broadcastGuessForVerification(guess, myId);
+
+        // Create the guess data to broadcast
         const guessData = {
           type: "aiGuess",
           playerId: myId,
@@ -459,10 +508,18 @@ async function submitGuess() {
           currentScore: gameState.scores.get(myId),
         };
 
+        // Send to all peers
         const peers = [...swarm.connections];
+        for (const peer of peers) {
+          peer.write(JSON.stringify(guessData));
+        }
 
+        updateChatMessages();
+        updateScoresDisplay();
+        guessInput.value = "";
+
+        // If this is a winning guess (3 points)
         if (points === 3) {
-          // Correct guess (3 points) - only send to the drawer
           // Halve the timer
           gameState.timeLeft = Math.floor(gameState.timeLeft / 2);
           const timerElement = document.querySelector("#timer");
@@ -476,28 +533,9 @@ async function submitGuess() {
 
           // Send to all peers
           for (const peer of peers) {
-            const peerId = b4a
-              .toString(peer.remotePublicKey, "hex")
-              .substr(0, 6);
-
-            // Only send the guess to the drawer
-            if (peerId === gameState.currentDrawer) {
-              peer.write(JSON.stringify(guessData));
-            }
-
-            // Send timer update to everyone
             peer.write(JSON.stringify(timerData));
           }
-        } else {
-          // Normal guess (less than 3 points) - broadcast to all
-          for (const peer of peers) {
-            peer.write(JSON.stringify(guessData));
-          }
         }
-
-        updateChatMessages();
-        updateScoresDisplay();
-        guessInput.value = "";
       } catch (error) {
         console.error("Evaluation error:", error);
       }
@@ -822,6 +860,18 @@ function handleGameData(data) {
         // Apply the fill operation
         floodFill(gameData.x, gameData.y, gameData.color);
         break;
+      case "verifyGuess":
+        // Handle verification request
+        processGuessVerification(gameData);
+        break;
+
+      case "verificationResult":
+        // Handle verification result
+        handleVerificationResult(gameData);
+        break;
+      case "verificationVote":
+        handleVerificationVote(gameData);
+        break;
     }
   } catch (e) {
     console.error("Error handling game data:", e);
@@ -987,4 +1037,634 @@ function hexToRgb(hex) {
         b: parseInt(result[3], 16),
       }
     : { r: 0, g: 0, b: 0 };
+}
+
+// This function broadcasts a guess to all clients for independent verification
+function broadcastGuessForVerification(guess, guessingPlayerId) {
+  const guessId = `${guessingPlayerId}-${Date.now()}`; // Unique ID for this guess
+
+  // Create a verification request
+  const verificationRequest = {
+    type: "verifyGuess",
+    guessId: guessId,
+    guess: guess,
+    guessingPlayerId: guessingPlayerId,
+    timestamp: Date.now(),
+  };
+
+  // Initialize verification results for this guess
+  if (!gameState.verificationResults.has(guessId)) {
+    gameState.verificationResults.set(guessId, new Map());
+  }
+
+  // Send to all peers
+  const peers = [...swarm.connections];
+  for (const peer of peers) {
+    peer.write(JSON.stringify(verificationRequest));
+  }
+
+  // Also process locally
+  processGuessVerification(verificationRequest);
+
+  return guessId; // Return the ID for tracking
+}
+
+// This function processes a verification request and calculates similarity locally
+async function processGuessVerification(verificationData) {
+  const { guessId, guess, guessingPlayerId } = verificationData;
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+
+  try {
+    // Calculate similarity locally
+    const similarity = await compareWords(gameState.currentWord, guess);
+
+    // Store the result locally
+    if (!gameState.verificationResults.has(guessId)) {
+      gameState.verificationResults.set(guessId, new Map());
+    }
+
+    const guessResults = gameState.verificationResults.get(guessId);
+    guessResults.set(myId, {
+      similarity,
+      points: calculatePoints(similarity),
+      verifier: myId,
+      timestamp: Date.now(),
+    });
+
+    // Broadcast the verification result
+    const verificationResult = {
+      type: "verificationResult",
+      guessId: guessId,
+      guessingPlayerId: guessingPlayerId,
+      verifierId: myId,
+      similarity: similarity,
+      points: calculatePoints(similarity),
+    };
+
+    // Send to all peers
+    const peers = [...swarm.connections];
+    for (const peer of peers) {
+      peer.write(JSON.stringify(verificationResult));
+    }
+
+    console.log(`Verified guess ${guess} with similarity ${similarity}`);
+  } catch (error) {
+    console.error("Error processing verification:", error);
+  }
+}
+
+// This function handles received verification results
+function handleVerificationResult(data) {
+  const { guessId, guessingPlayerId, verifierId, similarity, points } = data;
+
+  // Store the verification result
+  if (!gameState.verificationResults.has(guessId)) {
+    gameState.verificationResults.set(guessId, new Map());
+  }
+
+  const guessResults = gameState.verificationResults.get(guessId);
+  guessResults.set(verifierId, {
+    similarity,
+    points,
+    verifier: verifierId,
+    timestamp: Date.now(),
+  });
+
+  // Check if the result is for our guess and update UI if needed
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+  if (guessingPlayerId === myId) {
+    updateVerificationUI(guessId);
+  }
+}
+
+// Update the UI with verification results for a guess
+function updateVerificationUI(guessId) {
+  const guessResults = gameState.verificationResults.get(guessId);
+  if (!guessResults || guessResults.size === 0) return;
+
+  // Calculate average similarity and points
+  let totalSimilarity = 0;
+  let totalPoints = 0;
+
+  guessResults.forEach((result) => {
+    totalSimilarity += result.similarity;
+    totalPoints += result.points;
+  });
+
+  const averageSimilarity = totalSimilarity / guessResults.size;
+  const averagePoints = Math.round(totalPoints / guessResults.size);
+
+  // Update the chat/guess display with verification information
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+
+  // Now update the guess in the game state
+  if (gameState.guesses.has(myId)) {
+    const existingGuessData = gameState.guesses.get(myId);
+
+    // Update with verification data
+    gameState.guesses.set(myId, {
+      ...existingGuessData,
+      points: averagePoints,
+      similarity: averageSimilarity,
+      verified: true,
+      verifications: guessResults.size,
+    });
+
+    // Update score
+    const currentScore = gameState.scores.get(myId) || 0;
+    gameState.scores.set(myId, currentScore + averagePoints);
+
+    // Update UI
+    updateChatMessages();
+    updateScoresDisplay();
+  }
+}
+
+// Function to show the verification summary
+function showVerificationSummary() {
+  // Create container for verification summary
+  const summaryContainer = document.createElement("div");
+  summaryContainer.className = "verification-summary";
+  summaryContainer.style.position = "fixed";
+  summaryContainer.style.top = "50%";
+  summaryContainer.style.left = "50%";
+  summaryContainer.style.transform = "translate(-50%, -50%)";
+  summaryContainer.style.backgroundColor = "#001601";
+  summaryContainer.style.color = "#b0d944";
+  summaryContainer.style.padding = "20px";
+  summaryContainer.style.borderRadius = "5px";
+  summaryContainer.style.zIndex = "1000";
+  summaryContainer.style.maxWidth = "80%";
+  summaryContainer.style.maxHeight = "80%";
+  summaryContainer.style.overflow = "auto";
+
+  // Add heading
+  const heading = document.createElement("h2");
+  heading.textContent = "Verification Results";
+  summaryContainer.appendChild(heading);
+
+  // Create table for verification results
+  const table = document.createElement("table");
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+  table.style.marginTop = "15px";
+
+  // Create header row
+  const headerRow = document.createElement("tr");
+
+  const guessHeader = document.createElement("th");
+  guessHeader.textContent = "Guess";
+  guessHeader.style.textAlign = "left";
+  guessHeader.style.padding = "8px";
+  guessHeader.style.borderBottom = "1px solid #b0d944";
+
+  const playerHeader = document.createElement("th");
+  playerHeader.textContent = "Player";
+  playerHeader.style.textAlign = "left";
+  playerHeader.style.padding = "8px";
+  playerHeader.style.borderBottom = "1px solid #b0d944";
+
+  headerRow.appendChild(guessHeader);
+  headerRow.appendChild(playerHeader);
+
+  // Add headers for each player as a verifier
+  gameState.players.forEach((playerId) => {
+    const verifierHeader = document.createElement("th");
+    const nickname =
+      gameState.nicknames.get(playerId) || `Player ${playerId.substr(0, 4)}`;
+    verifierHeader.textContent = nickname;
+    verifierHeader.style.textAlign = "center";
+    verifierHeader.style.padding = "8px";
+    verifierHeader.style.borderBottom = "1px solid #b0d944";
+    headerRow.appendChild(verifierHeader);
+  });
+
+  const consensusHeader = document.createElement("th");
+  consensusHeader.textContent = "Consensus";
+  consensusHeader.style.textAlign = "center";
+  consensusHeader.style.padding = "8px";
+  consensusHeader.style.borderBottom = "1px solid #b0d944";
+  headerRow.appendChild(consensusHeader);
+
+  table.appendChild(headerRow);
+
+  // Add rows for each verified guess
+  gameState.verificationResults.forEach((results, guessId) => {
+    const row = document.createElement("tr");
+
+    // Extract guess and player info from guessId
+    const parts = guessId.split("-");
+    const guessingPlayerId = parts[0];
+    const guessData = Array.from(gameState.guesses.entries()).find(
+      ([pid, data]) => pid === guessingPlayerId
+    );
+
+    if (!guessData) return; // Skip if we can't find the guess
+
+    const guessText = guessData[1].text;
+    const nickname =
+      gameState.nicknames.get(guessingPlayerId) ||
+      `Player ${guessingPlayerId.substr(0, 4)}`;
+
+    // Add guess column
+    const guessCell = document.createElement("td");
+    guessCell.textContent = guessText;
+    guessCell.style.padding = "8px";
+    guessCell.style.borderBottom = "1px solid #3a3a3a";
+
+    // Add player column
+    const playerCell = document.createElement("td");
+    playerCell.textContent = nickname;
+    playerCell.style.padding = "8px";
+    playerCell.style.borderBottom = "1px solid #3a3a3a";
+
+    row.appendChild(guessCell);
+    row.appendChild(playerCell);
+
+    // Add similarity values from each verifier
+    let totalSimilarity = 0;
+    let verifierCount = 0;
+
+    gameState.players.forEach((playerId) => {
+      const verifierCell = document.createElement("td");
+      verifierCell.style.textAlign = "center";
+      verifierCell.style.padding = "8px";
+      verifierCell.style.borderBottom = "1px solid #3a3a3a";
+
+      if (results.has(playerId)) {
+        const result = results.get(playerId);
+        verifierCell.textContent = `${Math.round(result.similarity * 100)}%`;
+        totalSimilarity += result.similarity;
+        verifierCount++;
+      } else {
+        verifierCell.textContent = "N/A";
+      }
+
+      row.appendChild(verifierCell);
+    });
+
+    // Add consensus column
+    const consensusCell = document.createElement("td");
+    consensusCell.style.textAlign = "center";
+    consensusCell.style.padding = "8px";
+    consensusCell.style.borderBottom = "1px solid #3a3a3a";
+
+    if (verifierCount > 0) {
+      const avgSimilarity = totalSimilarity / verifierCount;
+      consensusCell.textContent = `${Math.round(avgSimilarity * 100)}%`;
+    } else {
+      consensusCell.textContent = "N/A";
+    }
+
+    row.appendChild(consensusCell);
+    table.appendChild(row);
+  });
+
+  summaryContainer.appendChild(table);
+
+  // Add voting buttons
+  const votingSection = document.createElement("div");
+  votingSection.style.marginTop = "20px";
+  votingSection.style.textAlign = "center";
+
+  const votePrompt = document.createElement("p");
+  votePrompt.textContent = "Do you agree with these verification results?";
+  votingSection.appendChild(votePrompt);
+
+  const buttonContainer = document.createElement("div");
+  buttonContainer.style.display = "flex";
+  buttonContainer.style.justifyContent = "center";
+  buttonContainer.style.gap = "20px";
+  buttonContainer.style.marginTop = "10px";
+
+  const agreeButton = document.createElement("button");
+  agreeButton.textContent = "I Agree";
+  agreeButton.style.padding = "10px 20px";
+  agreeButton.style.backgroundColor = "#004d00";
+  agreeButton.style.color = "#b0d944";
+  agreeButton.style.border = "none";
+  agreeButton.style.borderRadius = "5px";
+  agreeButton.style.cursor = "pointer";
+
+  const disagreeButton = document.createElement("button");
+  disagreeButton.textContent = "I Disagree";
+  disagreeButton.style.padding = "10px 20px";
+  disagreeButton.style.backgroundColor = "#4d0000";
+  disagreeButton.style.color = "#b0d944";
+  disagreeButton.style.border = "none";
+  disagreeButton.style.borderRadius = "5px";
+  disagreeButton.style.cursor = "pointer";
+
+  // Add voting functionality
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+
+  agreeButton.addEventListener("click", () => {
+    submitVerificationVote(true);
+    agreeButton.disabled = true;
+    disagreeButton.disabled = true;
+    votePrompt.textContent = "Your vote has been recorded. Thank you!";
+  });
+
+  disagreeButton.addEventListener("click", () => {
+    submitVerificationVote(false);
+    agreeButton.disabled = true;
+    disagreeButton.disabled = true;
+    votePrompt.textContent = "Your vote has been recorded. Thank you!";
+  });
+
+  buttonContainer.appendChild(agreeButton);
+  buttonContainer.appendChild(disagreeButton);
+  votingSection.appendChild(buttonContainer);
+
+  // Add close button
+  const closeButton = document.createElement("button");
+  closeButton.textContent = "Close";
+  closeButton.style.marginTop = "20px";
+  closeButton.style.padding = "8px 16px";
+  closeButton.style.backgroundColor = "#000";
+  closeButton.style.color = "#b0d944";
+  closeButton.style.border = "1px solid #b0d944";
+  closeButton.style.borderRadius = "5px";
+  closeButton.style.cursor = "pointer";
+
+  closeButton.addEventListener("click", () => {
+    document.body.removeChild(summaryContainer);
+  });
+
+  summaryContainer.appendChild(votingSection);
+  summaryContainer.appendChild(closeButton);
+  document.body.appendChild(summaryContainer);
+}
+
+// Function to submit a verification vote
+function submitVerificationVote(agree) {
+  const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
+
+  // Create vote data
+  const voteData = {
+    type: "verificationVote",
+    playerId: myId,
+    agree: agree,
+    timestamp: Date.now(),
+  };
+
+  // Store vote locally
+  if (!gameState.voteResults.has(myId)) {
+    gameState.voteResults.set(myId, agree);
+  }
+
+  // Broadcast vote to all peers
+  const peers = [...swarm.connections];
+  for (const peer of peers) {
+    peer.write(JSON.stringify(voteData));
+  }
+
+  // Check vote results
+  updateVotingResults();
+}
+
+// Function to handle incoming votes
+function handleVerificationVote(data) {
+  const { playerId, agree } = data;
+
+  // Store the vote
+  gameState.voteResults.set(playerId, agree);
+
+  // Update voting results
+  updateVotingResults();
+}
+
+// Update voting results and display
+function updateVotingResults() {
+  // Count votes
+  let agreeCount = 0;
+  let disagreeCount = 0;
+
+  gameState.voteResults.forEach((agree) => {
+    if (agree) {
+      agreeCount++;
+    } else {
+      disagreeCount++;
+    }
+  });
+
+  // If everyone has voted, show the results
+  if (agreeCount + disagreeCount >= gameState.players.length) {
+    // Create result notification
+    if (agreeCount > disagreeCount) {
+      showNotification(
+        "Majority of players AGREE with verification results!",
+        5000
+      );
+    } else if (disagreeCount > agreeCount) {
+      showNotification(
+        "Majority of players DISAGREE with verification results!",
+        5000
+      );
+    } else {
+      showNotification(
+        "Verification vote is tied! No consensus reached.",
+        5000
+      );
+    }
+  }
+}
+
+// Create a function to show verification results at the end of each round
+function showRoundVerificationResults() {
+  // Create container for round verification summary
+  const summaryContainer = document.createElement("div");
+  summaryContainer.className = "verification-summary";
+  summaryContainer.style.position = "fixed";
+  summaryContainer.style.top = "50%";
+  summaryContainer.style.left = "50%";
+  summaryContainer.style.transform = "translate(-50%, -50%)";
+  summaryContainer.style.backgroundColor = "#001601";
+  summaryContainer.style.color = "#b0d944";
+  summaryContainer.style.padding = "20px";
+  summaryContainer.style.borderRadius = "5px";
+  summaryContainer.style.zIndex = "1000";
+  summaryContainer.style.maxWidth = "90%";
+  summaryContainer.style.maxHeight = "80%";
+  summaryContainer.style.overflow = "auto";
+
+  // Add heading
+  const heading = document.createElement("h2");
+  heading.textContent = `Round ${
+    gameState.currentRound + 1
+  } Verification Results`;
+  summaryContainer.appendChild(heading);
+
+  // Add word information
+  const wordInfo = document.createElement("p");
+  wordInfo.textContent = `The word was: ${gameState.currentWord}`;
+  wordInfo.style.fontSize = "18px";
+  wordInfo.style.marginBottom = "20px";
+  summaryContainer.appendChild(wordInfo);
+
+  // Create table for verification results
+  const table = document.createElement("table");
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+  table.style.marginTop = "15px";
+
+  // Create header row
+  const headerRow = document.createElement("tr");
+
+  const guessHeader = document.createElement("th");
+  guessHeader.textContent = "Guess";
+  guessHeader.style.textAlign = "left";
+  guessHeader.style.padding = "8px";
+  guessHeader.style.borderBottom = "1px solid #b0d944";
+
+  const playerHeader = document.createElement("th");
+  playerHeader.textContent = "Player";
+  playerHeader.style.textAlign = "left";
+  playerHeader.style.padding = "8px";
+  playerHeader.style.borderBottom = "1px solid #b0d944";
+
+  headerRow.appendChild(guessHeader);
+  headerRow.appendChild(playerHeader);
+
+  // Add headers for each player as a verifier
+  gameState.players.forEach((playerId) => {
+    const verifierHeader = document.createElement("th");
+    const nickname =
+      gameState.nicknames.get(playerId) || `Player ${playerId.substr(0, 4)}`;
+    verifierHeader.textContent = nickname;
+    verifierHeader.style.textAlign = "center";
+    verifierHeader.style.padding = "8px";
+    verifierHeader.style.borderBottom = "1px solid #b0d944";
+    headerRow.appendChild(verifierHeader);
+  });
+
+  const consensusHeader = document.createElement("th");
+  consensusHeader.textContent = "Consensus";
+  consensusHeader.style.textAlign = "center";
+  consensusHeader.style.padding = "8px";
+  consensusHeader.style.borderBottom = "1px solid #b0d944";
+  headerRow.appendChild(consensusHeader);
+
+  table.appendChild(headerRow);
+
+  // Filter verification results for the current round only
+  let foundResults = false;
+  gameState.verificationResults.forEach((results, guessId) => {
+    const row = document.createElement("tr");
+
+    // Extract guess and player info from guessId
+    const parts = guessId.split("-");
+    const guessingPlayerId = parts[0];
+    const guessData = Array.from(gameState.guesses.entries()).find(
+      ([pid, data]) => pid === guessingPlayerId
+    );
+
+    if (!guessData) return; // Skip if we can't find the guess
+
+    foundResults = true;
+    const guessText = guessData[1].text;
+    const nickname =
+      gameState.nicknames.get(guessingPlayerId) ||
+      `Player ${guessingPlayerId.substr(0, 4)}`;
+
+    // Add guess column
+    const guessCell = document.createElement("td");
+    guessCell.textContent = guessText;
+    guessCell.style.padding = "8px";
+    guessCell.style.borderBottom = "1px solid #3a3a3a";
+
+    // Add player column
+    const playerCell = document.createElement("td");
+    playerCell.textContent = nickname;
+    playerCell.style.padding = "8px";
+    playerCell.style.borderBottom = "1px solid #3a3a3a";
+
+    row.appendChild(guessCell);
+    row.appendChild(playerCell);
+
+    // Add similarity values from each verifier
+    let totalSimilarity = 0;
+    let verifierCount = 0;
+
+    gameState.players.forEach((playerId) => {
+      const verifierCell = document.createElement("td");
+      verifierCell.style.textAlign = "center";
+      verifierCell.style.padding = "8px";
+      verifierCell.style.borderBottom = "1px solid #3a3a3a";
+
+      if (results.has(playerId)) {
+        const result = results.get(playerId);
+        verifierCell.textContent = `${Math.round(result.similarity * 100)}%`;
+        totalSimilarity += result.similarity;
+        verifierCount++;
+      } else {
+        verifierCell.textContent = "N/A";
+      }
+
+      row.appendChild(verifierCell);
+    });
+
+    // Add consensus column
+    const consensusCell = document.createElement("td");
+    consensusCell.style.textAlign = "center";
+    consensusCell.style.padding = "8px";
+    consensusCell.style.borderBottom = "1px solid #3a3a3a";
+
+    if (verifierCount > 0) {
+      const avgSimilarity = totalSimilarity / verifierCount;
+      consensusCell.textContent = `${Math.round(avgSimilarity * 100)}%`;
+    } else {
+      consensusCell.textContent = "N/A";
+    }
+
+    row.appendChild(consensusCell);
+    table.appendChild(row);
+  });
+
+  if (!foundResults) {
+    const noResultsRow = document.createElement("tr");
+    const noResultsCell = document.createElement("td");
+    noResultsCell.colSpan = 3 + gameState.players.length;
+    noResultsCell.textContent = "No guesses were made in this round.";
+    noResultsCell.style.textAlign = "center";
+    noResultsCell.style.padding = "20px";
+    noResultsRow.appendChild(noResultsCell);
+    table.appendChild(noResultsRow);
+  }
+
+  summaryContainer.appendChild(table);
+
+  // Add info text about next round
+  const nextRoundInfo = document.createElement("p");
+  nextRoundInfo.textContent = "Next round starting soon...";
+  nextRoundInfo.style.marginTop = "20px";
+  nextRoundInfo.style.textAlign = "center";
+  summaryContainer.appendChild(nextRoundInfo);
+
+  // Add close button
+  const closeButton = document.createElement("button");
+  closeButton.textContent = "Close";
+  closeButton.style.marginTop = "15px";
+  closeButton.style.padding = "8px 16px";
+  closeButton.style.backgroundColor = "#000";
+  closeButton.style.color = "#b0d944";
+  closeButton.style.border = "1px solid #b0d944";
+  closeButton.style.borderRadius = "5px";
+  closeButton.style.cursor = "pointer";
+  closeButton.style.display = "block";
+  closeButton.style.margin = "15px auto 0";
+
+  closeButton.addEventListener("click", () => {
+    document.body.removeChild(summaryContainer);
+  });
+
+  summaryContainer.appendChild(closeButton);
+  document.body.appendChild(summaryContainer);
+
+  // Auto-close after 7 seconds (before next round starts)
+  setTimeout(() => {
+    if (document.body.contains(summaryContainer)) {
+      document.body.removeChild(summaryContainer);
+    }
+  }, 7000);
 }
