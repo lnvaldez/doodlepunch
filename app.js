@@ -6,6 +6,10 @@ import Hyperswarm from "hyperswarm"; // Module for P2P networking and connecting
 import crypto from "hypercore-crypto"; // Cryptographic functions for generating the key in app
 import b4a from "b4a"; // Module for buffer-to-string and vice-versa conversions
 const { teardown, updates } = Pear; // Functions for cleanup and updates
+import * as tf from "@tensorflow/tfjs";
+import { load } from "@tensorflow-models/universal-sentence-encoder";
+import { spawn } from "child_process";
+import { words } from "./words";
 
 const swarm = new Hyperswarm();
 let canvas, ctx;
@@ -30,42 +34,6 @@ let gameState = {
   maxRounds: 5,
   players: [], // Array to store player order
 };
-
-// Word list for the game
-const words = [
-  "cat",
-  "dog",
-  "house",
-  "tree",
-  "car",
-  "bicycle",
-  "computer",
-  "phone",
-  "book",
-  "chair",
-  "table",
-  "window",
-  "door",
-  "flower",
-  "bird",
-  "fish",
-  "sun",
-  "moon",
-  "star",
-  "cloud",
-  "rain",
-  "snow",
-  "mountain",
-  "river",
-  "beach",
-  "ocean",
-  "forest",
-  "desert",
-  "city",
-  "bridge",
-  "train",
-  "plane",
-];
 
 // Unannounce the public key before exiting the process
 // (This is not a requirement, but it helps avoid DHT pollution)
@@ -107,6 +75,142 @@ document.querySelectorAll(".tool-button").forEach((button) => {
 // Color picker
 document.querySelector("#color-picker").addEventListener("input", (e) => {
   currentColor = e.target.value;
+});
+
+// Add this to the top of your app.js
+console.log("TensorFlow.js version:", tf.version);
+
+// Improved model initialization with status tracking
+let similarityModel = null;
+let tensorflowStatus = "loading"; // "loading", "ready", "failed"
+
+// Initialize model with better logging and verification
+async function initializeModel() {
+  try {
+    console.log("Starting TensorFlow model initialization...");
+    tensorflowStatus = "loading";
+
+    // Add a notification that the model is loading
+    showNotification("Loading AI similarity model...", 3000);
+
+    // Load the model
+    similarityModel = await load();
+
+    // Test if the model works
+    if (similarityModel) {
+      console.log("Model loaded, testing functionality...");
+
+      // Test with two simple words
+      const testEmbeddings = await similarityModel.embed(["test", "testing"]);
+      const testTensor1 = testEmbeddings.slice([0, 0], [1]);
+      const testTensor2 = testEmbeddings.slice([1, 0], [1]);
+
+      // Calculate similarity for test words
+      const testDotProduct = tf.sum(tf.mul(testTensor1, testTensor2));
+      const testNorm1 = tf.sqrt(tf.sum(tf.square(testTensor1)));
+      const testNorm2 = tf.sqrt(tf.sum(tf.square(testTensor2)));
+      const testSimilarity = tf.div(
+        testDotProduct,
+        tf.mul(testNorm1, testNorm2)
+      );
+
+      // Get the actual value
+      const testValue = testSimilarity.dataSync()[0];
+      console.log("Test similarity calculation:", testValue);
+
+      if (testValue > 0) {
+        console.log("✅ TensorFlow model verified and working!");
+        tensorflowStatus = "ready";
+        showNotification("AI model loaded successfully!", 3000);
+      } else {
+        console.error("❌ Model loaded but similarity calculation failed");
+        tensorflowStatus = "failed";
+      }
+    } else {
+      console.error("❌ Failed to load model");
+      tensorflowStatus = "failed";
+      showNotification("AI model failed to load. Using fallback mode.", 5000);
+    }
+  } catch (error) {
+    console.error("❌ Error initializing TensorFlow model:", error);
+    tensorflowStatus = "failed";
+    showNotification("AI model error: " + error.message, 5000);
+  }
+}
+
+// Enhanced similarity function with debugging
+async function localEvaluateSimilarity(word1, word2) {
+  console.log(
+    `Comparing "${word1}" with "${word2}" (TensorFlow status: ${tensorflowStatus})`
+  );
+
+  // Exact match check
+  if (word1.toLowerCase() === word2.toLowerCase()) {
+    console.log("✅ Exact match detected!");
+    return { similarity: 1.0, method: "exact-match" };
+  }
+
+  // If TensorFlow is ready, use it
+  if (tensorflowStatus === "ready" && similarityModel) {
+    try {
+      console.log("Using TensorFlow for similarity calculation");
+
+      // Get embeddings
+      const embeddings = await similarityModel.embed([word1, word2]);
+
+      // Log embedding shape info for debugging
+      console.log("Embedding dimensions:", embeddings.shape);
+
+      // Get vectors
+      const vec1 = embeddings.slice([0, 0], [1]);
+      const vec2 = embeddings.slice([1, 0], [1]);
+
+      // Calculate cosine similarity step by step
+      const dotProduct = tf.sum(tf.mul(vec1, vec2));
+      const norm1 = tf.sqrt(tf.sum(tf.square(vec1)));
+      const norm2 = tf.sqrt(tf.sum(tf.square(vec2)));
+
+      // Log intermediate values
+      console.log("Dot product:", dotProduct.dataSync()[0]);
+      console.log("Norm1:", norm1.dataSync()[0]);
+      console.log("Norm2:", norm2.dataSync()[0]);
+
+      // Final calculation
+      const similarityValue = tf.div(dotProduct, tf.mul(norm1, norm2));
+      const result = similarityValue.dataSync()[0];
+
+      console.log(`✅ TensorFlow similarity: ${result}`);
+      return {
+        similarity: Math.max(0, Math.min(1, result)),
+        method: "tensorflow",
+      };
+    } catch (error) {
+      console.error("❌ TensorFlow calculation error:", error);
+      // Fall through to fallback
+    }
+  }
+
+  console.log("Using fallback similarity calculation");
+
+  // Fallback calculation
+  const fallbackResult = calculateFallbackSimilarity(word1, word2);
+  console.log(`ℹ️ Fallback similarity: ${fallbackResult.similarity}`);
+  return { ...fallbackResult, method: "fallback" };
+}
+
+// Separate function for fallback calculation
+function calculateFallbackSimilarity(word1, word2) {
+  // Your existing fallback code
+  // [...]
+
+  // For now, return a simple example
+  return { similarity: 0.3 };
+}
+
+// Call this immediately
+document.addEventListener("DOMContentLoaded", () => {
+  console.log("DOM loaded, initializing TensorFlow...");
+  initializeModel();
 });
 
 async function createGameRoom() {
@@ -385,96 +489,22 @@ function updateChatMessages() {
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-// Local fallback for similarity evaluation
-function localEvaluateSimilarity(word1, word2) {
-  word1 = word1.toLowerCase();
-  word2 = word2.toLowerCase();
+// Function to compare words using the Python script
+function compareWords(word1, word2) {
+  return new Promise((resolve, reject) => {
+    const pythonProcess = spawn("python", ["similarity.py", word1, word2]);
 
-  // Exact match
-  if (word1 === word2) {
-    return { points: 3, similarity: 1.0 };
-  }
+    pythonProcess.stdout.on("data", (data) => {
+      resolve(parseFloat(data.toString()));
+    });
 
-  // Categories for common words in the game
-  const categories = {
-    animals: ["cat", "dog", "bird", "fish"],
-    home: ["house", "window", "door", "chair", "table"],
-    nature: [
-      "tree",
-      "flower",
-      "mountain",
-      "river",
-      "beach",
-      "ocean",
-      "forest",
-      "desert",
-      "sun",
-      "moon",
-      "star",
-      "cloud",
-      "rain",
-      "snow",
-    ],
-    transport: ["car", "bicycle", "train", "plane", "bridge"],
-    tech: ["computer", "phone"],
-    objects: ["book"],
-  };
-
-  // Find categories for each word
-  const word1Categories = [];
-  const word2Categories = [];
-
-  for (const [category, words] of Object.entries(categories)) {
-    if (words.includes(word1)) word1Categories.push(category);
-    if (words.includes(word2)) word2Categories.push(category);
-  }
-
-  // Find shared categories
-  const sharedCategories = word1Categories.filter((cat) =>
-    word2Categories.includes(cat)
-  );
-
-  let similarity = 0;
-
-  // If they share categories, they are semantically similar
-  if (sharedCategories.length > 0) {
-    similarity = 0.7; // Same category (e.g., cat and dog are both animals)
-  } else if (word1Categories.length > 0 && word2Categories.length > 0) {
-    // Different categories but both are known words
-    similarity = 0.3;
-  } else {
-    // Check for substring or partial match
-    if (word1.includes(word2) || word2.includes(word1)) {
-      similarity = 0.6;
-    } else {
-      // Check for character similarity (simple Jaccard coefficient)
-      const set1 = new Set(word1.split(""));
-      const set2 = new Set(word2.split(""));
-
-      const intersectionSize = [...set1].filter((x) => set2.has(x)).length;
-      const unionSize = set1.size + set2.size - intersectionSize;
-
-      // Calculate Jaccard similarity
-      similarity = intersectionSize / unionSize;
-    }
-  }
-
-  // Determine points based on similarity
-  let points = 0;
-  if (similarity >= 0.85) {
-    points = 2;
-  } else if (similarity >= 0.65) {
-    points = 1;
-  }
-
-  console.log(
-    `Local similarity for "${word1}" vs "${word2}": ${similarity.toFixed(
-      2
-    )} (${points} points)`
-  );
-  return { points, similarity };
+    pythonProcess.stderr.on("data", (data) => {
+      reject(data.toString());
+    });
+  });
 }
 
+// Example usage in your application
 async function submitGuess() {
   if (gameState.roundInProgress) {
     const guessInput = document.querySelector("#guess-input");
@@ -484,57 +514,11 @@ async function submitGuess() {
       const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
 
       try {
-        // Show notification that we're processing
         showNotification("Evaluating your guess...", 2000);
 
-        console.log(
-          `Sending guess "${guess}" to be evaluated against "${gameState.currentWord}"`
-        );
-
-        let points, similarity;
-
-        try {
-          // Get AI evaluation
-          const response = await fetch("http://localhost:3000/evaluate-guess", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              actualWord: gameState.currentWord,
-              guess: guess,
-            }),
-          });
-
-          // Log response status
-          console.log(`Server response status: ${response.status}`);
-
-          // Handle non-OK responses
-          if (!response.ok) {
-            const errorBody = await response.text();
-            console.error(`Server error: ${response.status}`, errorBody);
-            throw new Error(`Server error (${response.status}): ${errorBody}`);
-          }
-
-          // Parse response
-          const responseData = await response.json();
-          console.log("Evaluation response:", responseData);
-
-          if (responseData.error) {
-            throw new Error(responseData.error);
-          }
-
-          ({ points, similarity } = responseData);
-        } catch (error) {
-          console.warn(
-            "Server evaluation failed, using local fallback:",
-            error.message
-          );
-          showNotification("Using local evaluation (server unavailable)", 2000);
-
-          // Use local evaluation as fallback
-          const result = localEvaluateSimilarity(gameState.currentWord, guess);
-          points = result.points;
-          similarity = result.similarity;
-        }
+        // Use the compareWords function to get similarity
+        const similarity = await compareWords(gameState.currentWord, guess);
+        const points = calculatePoints(similarity);
 
         // Update scores
         const currentScore = gameState.scores.get(myId) || 0;
@@ -577,53 +561,18 @@ async function submitGuess() {
         checkAllPlayersGuessed();
         guessInput.value = "";
       } catch (error) {
-        console.error("Error in guess submission:", error);
-
-        // Use local evaluation as final fallback
-        const result = localEvaluateSimilarity(gameState.currentWord, guess);
-        const points = result.points;
-        const similarity = result.similarity;
-
-        // Update score with local evaluation
-        const currentScore = gameState.scores.get(myId) || 0;
-        gameState.scores.set(myId, currentScore + points);
-
-        // Store guess with local evaluation
-        gameState.guesses.set(myId, {
-          text: guess,
-          points: points,
-          similarity: similarity,
-        });
-
-        showNotification(
-          `Using local evaluation: ${points} points awarded`,
-          3000
-        );
-
-        // Broadcast the locally evaluated guess
-        const guessData = {
-          type: "aiGuess",
-          playerId: myId,
-          guess: {
-            text: guess,
-            points: points,
-            similarity: similarity,
-          },
-          currentScore: gameState.scores.get(myId),
-        };
-
-        const peers = [...swarm.connections];
-        for (const peer of peers) {
-          peer.write(JSON.stringify(guessData));
-        }
-
-        updateChatMessages();
-        updateScoresDisplay();
-        checkAllPlayersGuessed();
-        guessInput.value = "";
+        console.error("Evaluation error:", error);
+        showNotification("Evaluation failed. Please try again.", 2000);
       }
     }
   }
+}
+
+function calculatePoints(similarity) {
+  if (similarity >= 0.95) return 3;
+  if (similarity >= 0.85) return 2;
+  if (similarity >= 0.65) return 1;
+  return 0;
 }
 
 function clearTimer() {
