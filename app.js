@@ -289,7 +289,6 @@ function endGame() {
   });
 }
 
-
 function updateChatMessages() {
   const chatMessages = document.querySelector("#chat-messages");
   chatMessages.innerHTML = "";
@@ -348,7 +347,6 @@ function compareWords(word1, word2) {
   });
 }
 
-
 async function submitGuess() {
   if (gameState.roundInProgress) {
     const guessInput = document.querySelector("#guess-input");
@@ -358,9 +356,9 @@ async function submitGuess() {
       const myId = b4a.toString(swarm.keyPair.publicKey, "hex").substr(0, 6);
 
       try {
-        showNotification("Evaluando tu respuesta...", 2000);
+        showNotification("Evaluating your guess...", 2000);
 
-        // Usar el script de Python para la comparación
+        // Use the Python script for comparison
         const similarity = await compareWords(gameState.currentWord, guess);
         const points = calculatePoints(similarity);
 
@@ -372,22 +370,25 @@ async function submitGuess() {
         gameState.guesses.set(myId, {
           text: guess,
           points: points,
-          similarity: similarity
+          similarity: similarity,
         });
 
-        // Mostrar notificación con puntos
-        showNotification(`${points} puntos! (${Math.round(similarity * 100)}% similar)`, 3000);
+        // Show notification with points
+        showNotification(
+          `${points} points! (${Math.round(similarity * 100)}% similar)`,
+          3000
+        );
 
-        // Broadcast del guess y score
+        // Broadcast the guess and score
         const guessData = {
           type: "aiGuess",
           playerId: myId,
           guess: {
             text: guess,
             points: points,
-            similarity: similarity
+            similarity: similarity,
           },
-          currentScore: gameState.scores.get(myId)
+          currentScore: gameState.scores.get(myId),
         };
 
         const peers = [...swarm.connections];
@@ -399,9 +400,13 @@ async function submitGuess() {
         updateScoresDisplay();
         checkAllPlayersGuessed();
         guessInput.value = "";
+
+        // End round if the player receives 3 points
+        if (points === 3) {
+          endRound();
+        }
       } catch (error) {
-        console.error("Error en la evaluación:", error);
-        showNotification("Error al evaluar la respuesta. Por favor intenta de nuevo.", 2000);
+        console.error("Evaluation error:", error);
       }
     }
   }
@@ -413,7 +418,6 @@ function calculatePoints(similarity) {
   if (similarity >= 0.65) return 1;
   return 0;
 }
-
 
 // Add event listeners for guess submission
 document.addEventListener("DOMContentLoaded", () => {
@@ -430,7 +434,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 });
-
 
 function updateScoresDisplay() {
   const scoresElement = document.querySelector("#scores");
@@ -655,6 +658,14 @@ function handleGameData(data) {
       case "clear":
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         break;
+      case "skip":
+        // Handle skip notification
+        const playerId = gameData.playerId;
+        const nickname =
+          gameState.nicknames.get(playerId) ||
+          `Player ${playerId.substr(0, 4)}`;
+        showNotification(`${nickname} skipped their guess.`, 2000);
+        break;
     }
   } catch (e) {
     console.error("Error handling game data:", e);
@@ -741,3 +752,19 @@ function showNotification(message, duration = 3000) {
     }, 300);
   }, duration);
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  const guessInput = document.querySelector("#guess-input");
+  const submitButton = document.querySelector("#submit-guess");
+  const skipButton = document.querySelector("#skip-guess"); // New Skip button
+
+  // Submit on button click
+  submitButton.addEventListener("click", submitGuess);
+
+  // Submit on Enter key
+  guessInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") {
+      submitGuess();
+    }
+  });
+});
