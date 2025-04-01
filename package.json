@@ -1,8 +1,8 @@
 {
-  "name": "pear-again",
+  "name": "doodlepunch",
   "main": "index.html",
   "pear": {
-    "name": "pear-again",
+    "name": "doodlepunch",
     "type": "desktop",
     "gui": {
       "backgroundColor": "#1F2430",
