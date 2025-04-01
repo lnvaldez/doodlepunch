@@ -23,5 +23,12 @@ DoodlePunch is a multiplayer P2P drawing and guessing game built with decentrali
 git clone https://github.com/lnvaldez/doodlepunch.git
 cd doodlepunch
 npm install
-pip install -r requirements.txt
+pip install numpy nltk
+python -c "import nltk; nltk.download('wordnet')"
+```
+
+3. Run
+
+```bash
+npm run dev
 ```
