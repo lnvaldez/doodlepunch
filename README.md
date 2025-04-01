@@ -13,6 +13,20 @@ DoodlePunch is a multiplayer P2P drawing and guessing game built with decentrali
 - 🔒 End-to-end encrypted peer connections
 - 📱 Responsive UI with dark theme
 
+## Technology Stack
+
+- **Frontend**: HTML5 Canvas, Vanilla JavaScript
+- **P2P Networking**: Hyperswarm (via Pear SDK)
+- **AI Validation**: Python + spaCy (en_core_web_lg model)
+- **Cryptography**: hypercore-crypto
+
+## Prerequisites
+
+- Node.js v16+
+- npm v7+
+- Python 3.8+
+- spaCy English language model
+
 ## Installation
 
 1. Ensure you have:
@@ -26,11 +40,11 @@ DoodlePunch is a multiplayer P2P drawing and guessing game built with decentrali
 git clone https://github.com/lnvaldez/doodlepunch.git
 cd doodlepunch
 npm install
-pip install numpy nltk
-python -c "import nltk; nltk.download('wordnet')"
-```
+pip install -r requirements.txt
+python -m spacy download en_core_web_lg
+´´´
 
-3. Run
+3. Run the Game
 
 ```bash
 npm run dev
