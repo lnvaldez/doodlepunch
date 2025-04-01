@@ -4,11 +4,14 @@ DoodlePunch is a multiplayer P2P drawing and guessing game built with decentrali
 
 ## Features
 
-- Real-time collaborative drawing canvas
-- AI-scored guessing system
-- Peer-to-peer networking via Hyperswarm
-- Dynamic round timer
-- Encrypted communications
+- 🎨 Real-time collaborative drawing canvas
+- 🔍 AI-powered guess validation using spaCy word vectors
+- 🌐 Peer-to-peer networking with Hyperswarm
+- 📊 Score tracking and leaderboards
+- ⏱ Round timer with dynamic adjustments
+- 🤖 Automated similarity scoring system
+- 🔒 End-to-end encrypted peer connections
+- 📱 Responsive UI with dark theme
 
 ## Installation
 
