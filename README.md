@@ -44,7 +44,7 @@ pip install -r requirements.txt
 python -m spacy download en_core_web_lg
 ´´´
 
-3. Run
+3. Run the Game
 
 ```bash
 npm run dev
