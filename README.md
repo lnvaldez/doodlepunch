@@ -18,12 +18,10 @@ DoodlePunch is a multiplayer P2P drawing and guessing game built with decentrali
 - **Frontend**: HTML5 Canvas, Vanilla JavaScript
 - **P2P Networking**: Hyperswarm (via Pear SDK)
 - **AI Validation**: Python + spaCy (en_core_web_lg model)
-- **Cryptography**: hypercore-crypto
 
 ## Prerequisites
 
 - Node.js v16+
-- npm v7+
 - Python 3.8+
 - spaCy English language model
 
@@ -42,10 +40,32 @@ cd doodlepunch
 npm install
 pip install -r requirements.txt
 python -m spacy download en_core_web_lg
-´´´
+```
 
 3. Run the Game
 
 ```bash
 npm run dev
 ```
+
+## How to Play
+**Create or Join Game**
+- Enter nickname
+- Create new room or join with existing topic
+
+**Game Flow**
+- Drawer: Receives secret word to draw
+- Guessers: Type guesses in real-time
+- AI Validation: Guesses scored by semantic similarity
+- Scoring: Points awarded based on similarity thresholds
+
+ **Round Structure**
+- 60-second rounds
+- 5 rounds per game
+- Dynamic timer (halved on correct guesses) **
+
+ **Tools**
+
+- Pen/Eraser with color picker
+- Bucket fill tool
+- Canvas clearing
