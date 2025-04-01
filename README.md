@@ -68,3 +68,4 @@ npm run dev
 - Pen/Eraser with color picker
 - Bucket fill tool
 - Canvas clearing
+
