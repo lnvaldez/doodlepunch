@@ -65,7 +65,6 @@ npm run dev
 - Dynamic timer (halved on correct guesses) **
 
  **Tools**
-
 - Pen/Eraser with color picker
 - Bucket fill tool
 - Canvas clearing
